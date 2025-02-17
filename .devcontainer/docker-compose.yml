@@ -1,0 +1,20 @@
+name: ModelForge
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: .devcontainer/Dockerfile
+      target: runtime
+    volumes:
+      - ../:/workspaces/dev
+      - F:/Datasets:/workspaces/dev/datasets:ro
+    environment:
+      DISPLAY: ${DISPLAY}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    command: ["tail", "-f", "/dev/null"]  
