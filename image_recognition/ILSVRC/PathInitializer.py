@@ -197,7 +197,7 @@ class PathInitializer:
       raise Exception("❌ Annotation is not parsed yet")
     
     temp = []
-    for image_file in tqdm(list(path.iterdir()), desc=f"Get image path in {path}"):
+    for image_file in tqdm(list(path.iterdir()), desc=f"🟢 Get image path in {path}"):
       if not image_file.is_file():
         if self.__STRICT_MODE:
           raise Exception(f"❌ Invalid file: {image_file}")
@@ -282,6 +282,7 @@ class PathInitializer:
 def test():
   initializer = PathInitializer(shuffle=True, mode=Mode.STRICT_AND_TEST)
   initializer.save()
+  print("🟩 Test Done")
 
 def main():
   initializer = PathInitializer(mode=Mode.NO_STRICT_AND_TEST)
