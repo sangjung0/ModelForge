@@ -4,7 +4,7 @@ from multiprocessing.shared_memory import SharedMemory
 import multiprocessing
 
 from data_loader.Setting import Setting
-from data_loader.env import *
+from data_loader.Env import Env
 
 class SharedStorage:
   # FLAG_SHM_NAME = "flag_shm"
@@ -46,12 +46,18 @@ class SharedStorage:
     return new
 
   def init(self):
-    if self.__isCopy:
-      self._allocate_shared_memory()
-    else:
+    try:
+      if self.__isCopy:
+        self._allocate_shared_memory()
+        self._allocate_ary()
+        return
       self._create_shared_memory()
+      self._allocate_ary()
       self._init_shm()
-    self._allocate_ary()
+    except Exception as e:
+      self.close()
+      self.unlink()
+      raise e
 
   def _allocate_shared_memory(self):
     # self.__flag_shm = SharedMemory(name=self.__FLAG_SHM_NAME)
@@ -67,7 +73,7 @@ class SharedStorage:
     # self.__processor_ary = np.ndarray(buffer=self.__flag_shm.buf[INT_SIZE:INT_SIZE*3], shape=(2,), dtype=np.uint32)
     self.__path_index_ary = np.ndarray(buffer=self.__path_index_shm.buf, shape=(1,), dtype=self._SIZE_OF_PATH)
     self.__last_path_index_ary = np.ndarray(buffer=self.__last_path_index_shm.buf, shape=(1,), dtype=self._SIZE_OF_PATH)
-    self.__buffer_path_list_ary = np.ndarray(buffer=self.__buffer_path_list_shm.buf, shape=(self._PATH_BUFFER_SIZE,), dtype=f'{self._MAX_PATH_LENGTH}')
+    self.__buffer_path_list_ary = np.ndarray(buffer=self.__buffer_path_list_shm.buf, shape=(self._PATH_BUFFER_SIZE,), dtype=f'S{self._MAX_PATH_LENGTH}')
     self.__index_ary = np.ndarray(buffer=self.__index_shm.buf, shape=(1,), dtype=np.uint32)
     self.__buffer_image_list_ary = np.ndarray(buffer=self.__buffer_image_list_shm.buf, shape=(self._IMAGE_BUFFER_SIZE, *self._SHAPE), dtype=np.uint8)
     self.__buffer_status_ary = np.ndarray(buffer=self.__buffer_status_shm.buf, shape=(self._IMAGE_BUFFER_SIZE* 2,), dtype=np.uint8)
@@ -77,7 +83,7 @@ class SharedStorage:
     path_index_shm_size = np.dtype(self._SIZE_OF_PATH).itemsize
     buffer_path_list_shm_size = self._MAX_PATH_LENGTH* self._PATH_BUFFER_SIZE
     last_path_index_shm_size = np.dtype(self._SIZE_OF_PATH).itemsize
-    index_shm_size = INT_SIZE
+    index_shm_size = Env.INT_SIZE.value
     buffer_image_list_shm_size = np.prod(self._SHAPE) * np.dtype(np.uint8).itemsize * self._IMAGE_BUFFER_SIZE
     buffer_status_shm_size = self._IMAGE_BUFFER_SIZE * 2
     
@@ -102,12 +108,12 @@ class SharedStorage:
       
   def _init_shm(self):
     # self.__flag_shm.buf[:] = 0
-    self.__path_index_shm.buf[:] = 0
-    self.__last_path_index_shm.buf[:] = 0
-    self.__buffer_path_list_shm.buf[:] = 0
-    self.__index_shm.buf[:] = 0
-    self.__buffer_image_list_shm.buf[:] = 0
-    self.__buffer_status_shm.buf[:] = 0
+    self.__path_index_ary[:] = 0
+    self.__last_path_index_ary[:] = 0
+    self.__buffer_path_list_ary[:] = 0
+    self.__index_ary[:] = 0
+    # self.__buffer_image_list_ary[:] = 0
+    self.__buffer_status_ary[:] = 0
     
   def isCopy(self):
     return self.__isCopy

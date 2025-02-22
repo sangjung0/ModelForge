@@ -4,7 +4,7 @@ from tensorflow.keras.utils import Sequence
 from multiprocessing.shared_memory import SharedMemory
 
 from data_loader import Setting, SharedStorage
-from data_loader.env import *
+from data_loader.Env import Env
 
 class Consumer(Sequence):
   def __init__(
@@ -98,11 +98,11 @@ class Consumer(Sequence):
       if check_index >= self.__IMAGE_BUFFER_SIZE:
         check_index = check_index % self.__IMAGE_BUFFER_SIZE
 
-      sleep_time = MIN_SLEEP_TIME
+      sleep_time = Env.MIN_SLEEP_TIME.value
       while self.__buffer_status_ary[check_index*2] == 0 or self.__buffer_status_ary[check_index*2+1] == 0:
         time.sleep(sleep_time)
         sleep_time += sleep_time
-        if sleep_time > MAX_SLEEP_TIME: sleep_time = MAX_SLEEP_TIME
+        if sleep_time > Env.MAX_SLEEP_TIME.value: sleep_time = Env.MAX_SLEEP_TIME.value
       
       self.__buffer_status_ary[check_index*2] = 0
     

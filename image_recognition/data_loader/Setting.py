@@ -1,5 +1,5 @@
 import multiprocessing
-from data_loader.env import *
+from data_loader.Env import Env
 
 class Setting:
   def __init__(
@@ -8,18 +8,16 @@ class Setting:
     max_path_length:int,
     number_of_image:int,
     batch_size:int,
-    with_label:bool,
     number_of_processor:int = 0,
-    path_buffer_size:int = PATH_BUFFER_SIZE,
-    image_buffer_size:int = IMAGE_BUFFER_SIZE,
-    size_of_path = SIZE_OF_PATH,
-    size_of_label = SIZE_OF_LABEL
+    path_buffer_size:int = Env.PATH_BUFFER_SIZE.value,
+    image_buffer_size:int = Env.IMAGE_BUFFER_SIZE.value,
+    size_of_path = Env.SIZE_OF_PATH.value,
+    size_of_label = Env.SIZE_OF_LABEL.value
   ):
     self.__SHAPE = shape
     self.__MAX_PATH_LENGTH = max_path_length
     self.__NUMBER_OF_IMAGE = number_of_image
     self.__BATCH_SIZE = batch_size
-    self.__WITH_LABEL = with_label
     
     self.__NUMBER_OF_PROCESSOR = (multiprocessing.cpu_count() -1) if number_of_processor == 0 else number_of_processor
     
@@ -43,10 +41,6 @@ class Setting:
   @property
   def batch_size(self):
     return self.__BATCH_SIZE
-  
-  @property
-  def with_label(self):
-    return self.__WITH_LABEL
   
   @property
   def number_of_processor(self):

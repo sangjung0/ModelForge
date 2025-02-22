@@ -4,7 +4,7 @@ import time
 from data_loader.PathProvider import PathProvider
 from data_loader import SharedStorage, Worker
 from data_loader.Setting import Setting
-from data_loader.env import *
+from data_loader.Env import Env
 
 class Provider:
   def __init__(
@@ -89,12 +89,12 @@ class Provider:
         if current_index == self._buffer_image_list_ary.shape[0]:
           current_index = 0
         
-        sleep_time = MIN_SLEEP_TIME
+        sleep_time = Env.MIN_SLEEP_TIME.value
         scale_index = current_index * 2
         while self._buffer_status_ary[scale_index] == 1 or self._buffer_status_ary[scale_index+1] == 1:
           time.sleep(sleep_time)
           sleep_time += sleep_time
-          if sleep_time > MAX_SLEEP_TIME: sleep_time = MAX_SLEEP_TIME
+          if sleep_time > Env.MAX_SLEEP_TIME.value: sleep_time = Env.MAX_SLEEP_TIME.value
 
         self._buffer_status_ary[scale_index] = 1
         buffers.append(current_index)
@@ -104,12 +104,12 @@ class Provider:
 
     return buffers
     
-  def __get_source_and_buffer(self, source_size:int=None, buffer_size:int=None):
+  def __get_source_and_buffer(self):
     if len(self._buffers) != 0:
       raise Exception("🟥 이미 버퍼를 가지고 있습니다.")
-    if source_size is None:
-      source_size = self._IMAGE_REQUEST_COUNT
-      buffer_size = self._BUFFER_REQUEST_COUNT
+
+    source_size = self._IMAGE_REQUEST_COUNT
+    buffer_size = self._BUFFER_REQUEST_COUNT
 
     sources = self.__get_source(source_size)
     buffer_size = round(buffer_size/source_size * len(sources))

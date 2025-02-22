@@ -29,7 +29,7 @@ class SharedStorageWithLabel(SharedStorage):
   def _create_shared_memory(self):
     super()._create_shared_memory()
 
-    buffer_label_list_shm_size = self._SIZE_OF_LABEL * self._PATH_BUFFER_SIZE
+    buffer_label_list_shm_size = np.dtype(self._SIZE_OF_LABEL).itemsize * self._PATH_BUFFER_SIZE
     buffer_image_label_list_shm_size = np.dtype(self._SIZE_OF_LABEL).itemsize * self._IMAGE_BUFFER_SIZE
 
     self.__buffer_label_list_shm = SharedMemory(name=self.__BUFFER_LABEL_LIST_SHM_NAME, create=True, size=buffer_label_list_shm_size)
@@ -38,8 +38,8 @@ class SharedStorageWithLabel(SharedStorage):
   def _init_shm(self):
     super()._init_shm()
 
-    self.__buffer_label_list_shm.buf[:] = 0
-    self.__buffer_image_label_list_shm.buf[:] = 0
+    self.__buffer_label_list_ary[:] = 0
+    self.__buffer_image_label_list_ary[:] = 0
 
   def close(self):
     super().close()
