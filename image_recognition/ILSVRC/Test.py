@@ -1,8 +1,6 @@
 from pathlib import Path
-from data_loader import Manager, WorkerWithLabel
+from data_loader import Manager, WorkerWithLabel, Setting, Utils
 from ILSVRC import ILSVRC_PATH
-from data_loader.Setting import Setting
-from data_loader.Utils import Utils
 
 def test():
   ILSVRC_path = Path(ILSVRC_PATH)

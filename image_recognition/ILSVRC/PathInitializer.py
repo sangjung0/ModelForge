@@ -5,8 +5,8 @@ from pathlib import Path
 from tqdm import tqdm
 from enum import Enum
 
-from utills import extract_number
-from ILSVRC.env import ILSVRC_PATH
+from .utils import extract_number
+from .env import ILSVRC_PATH
 
 class Mode(Enum):
   ONLY_STRICT = "only_strict"
