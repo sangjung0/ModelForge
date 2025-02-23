@@ -22,7 +22,7 @@
             },
             "options": {
                 "env": {
-                    "PYTHONPATH": "${workspaceFolder}/image_recognition"
+                    "PYTHONPATH": "${workspaceFolder}"
                 }
             },
             "problemMatcher": []

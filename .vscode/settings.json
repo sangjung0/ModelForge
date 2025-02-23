@@ -1,5 +1,6 @@
 {
   "python.defaultInterpreterPath": "/usr/bin/python3",
   "editor.wordWrap": "on",
-  "editor.wrappingIndent": "indent"
+  "editor.wrappingIndent": "indent",
+  "jupyter.notebookFileRoot": "/workspaces/dev"
 }

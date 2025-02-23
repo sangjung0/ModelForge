@@ -5,7 +5,7 @@ scipy
 scikit-image
 matplotlib
 scikit-learn
-tensorflow[and-cuda]
+tensorflow==2.18
 torch
 torchvision
 torchaudio
