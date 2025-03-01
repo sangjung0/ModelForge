@@ -1,5 +1,5 @@
 from pathlib import Path
-from data_loader import Manager, WorkerWithLabel, Setting, Utils
+from image_recognition.data_loader import Manager, WorkerWithLabel, Setting, Utils
 from ILSVRC import ILSVRC_PATH
 
 def test():
