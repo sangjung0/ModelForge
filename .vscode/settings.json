@@ -1,0 +1,18 @@
+{
+  "python.defaultInterpreter": "/usr/bin/python3",
+  "python.defaultInterpreterPath": "/usr/bin/python3",
+  "editor.wordWrap": "on",
+  "editor.wrappingIndent": "indent",
+  "jupyter.notebookFileRoot": "/workspaces/dev",
+  "python.analysis.exclude":[
+    "./datasets",
+    "**/__pycache__",
+    "**/.git"
+  ],
+  "files.watcherExclude": {
+		"**/.git/objects/**": true,
+		"**/.git/subtree-cache/**": true,
+		"**/.hg/store/**": true,
+    "datasets": true
+  }
+}

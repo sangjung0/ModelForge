@@ -1,0 +1,1 @@
+ILSVRC_PATH = "/workspaces/dev/datasets/ILSVRC"

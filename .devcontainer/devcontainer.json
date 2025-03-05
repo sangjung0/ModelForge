@@ -7,9 +7,9 @@
 	"service": "app",
 	"workspaceFolder":"/workspaces/dev",
 	// git 필요 없으면 지울 것
-	// "features": {
-	// 	"ghcr.io/devcontainers/features/git:1": {}
-	// },
+	"features": {
+		"ghcr.io/devcontainers/features/git:1": {}
+	},
 	"customizations": {
 		"vscode": {
 			"extensions": [
@@ -26,6 +26,5 @@
 			]
 		}
 	}
-
 }
 
