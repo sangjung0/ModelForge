@@ -10,7 +10,7 @@
             "cwd": "${workspaceFolder}",
             "justMyCode": true,
             "env": {
-                "PYTHONPATH":"${workspaceFolder}"
+                "PYTHONPATH":"${workspaceFolder}/modules"
             }
         }
     ]

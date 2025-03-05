@@ -22,7 +22,7 @@
             },
             "options": {
                 "env": {
-                    "PYTHONPATH": "${workspaceFolder}"
+                    "PYTHONPATH": "${workspaceFolder}/modules"
                 }
             },
             "problemMatcher": []
