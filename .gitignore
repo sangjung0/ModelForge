@@ -176,3 +176,4 @@ cython_debug/
 datasets/**
 .devcontainer/nvidia_tools/**
 **.png
+data/**
