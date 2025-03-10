@@ -14,8 +14,8 @@ class GenerativeSequence(image_segmentation.GenerativeSequence):
     self, 
     data_size:int, 
     batch_size:int, 
-    input_size:tuple[int, int] = (256, 256),
-    max_detection_count_root:int = 7,
+    input_size:tuple[int, int] = (128, 128),
+    max_detection_count_root:int = 4,
     material_path:str = SOURCE_PATH, 
     label_path:str = LABEL_PATH, 
     background_images_path:str = BACKGROUND_IMAGEES_PATH,
@@ -37,6 +37,9 @@ class GenerativeSequence(image_segmentation.GenerativeSequence):
 
   def get_shape(self):
     return self.__INPUT_SIZE
+
+  def get_class_count(self):
+    return len(self.__GENERATOR)
   
   def get_label(self, index:int):
     return self.__GENERATOR.get_label(index)
@@ -45,14 +48,14 @@ class GenerativeSequence(image_segmentation.GenerativeSequence):
     batch_size = len(indexes)
     img_height, img_width = self.__INPUT_SIZE
 
-    X = np.zeros((batch_size, img_height, img_width, 3), dtype=np.uint8)
+    X = np.zeros((batch_size, img_height, img_width, 3), dtype=np.float32)
 
     Y = {
       "roi": np.zeros((batch_size, img_height, img_width), dtype=np.bool_),
-      "centroid": np.zeros((batch_size, self.__MAX_DETECTION_COUNT, 2), dtype=np.float32),
+      "centroid": np.zeros((batch_size * self.__MAX_DETECTION_COUNT, 2), dtype=np.float32),
       "detection": np.zeros((batch_size, self.__MAX_DETECTION_COUNT, 4), dtype=np.float32),
-      "segmentation": np.zeros((batch_size, self.__MAX_DETECTION_COUNT, img_height, img_width), dtype=np.bool_),
-      "classification": np.zeros((batch_size, self.__MAX_DETECTION_COUNT), dtype=np.uint32)
+      "segmentation": np.zeros((batch_size * self.__MAX_DETECTION_COUNT, img_height //4, img_width//4), dtype=np.bool_),
+      "classification": np.zeros((batch_size * self.__MAX_DETECTION_COUNT), dtype=np.uint32)
     }
 
     for i in range(len(indexes)):
@@ -61,8 +64,8 @@ class GenerativeSequence(image_segmentation.GenerativeSequence):
         y_scale = img_height / img.shape[0]
         x_scale = img_width / img.shape[1]
 
-        X[i] = cv2.resize(img, (img_width, img_height))
-        Y["roi"][i] = cv2.resize(mask.astype(np.uint8), (img_width, img_height)) > 0
+        X[i] = cv2.resize(img, (img_width, img_height)).astype(np.float32) / 255
+        Y["roi"][i] = cv2.resize(mask.astype(np.uint8), (img_width, img_height), interpolation=cv2.INTER_NEAREST) > 0
         
         annotations = list(zip(labels, centroids, bboxes, contours))
 
@@ -80,7 +83,10 @@ class GenerativeSequence(image_segmentation.GenerativeSequence):
               key=lambda x: np.linalg.norm(np.array([x[1][0] * y_scale, x[1][1] * x_scale]) - np.array(center))
             )
 
-            centroid = (centroid[0] * y_scale / img_height, centroid[1] * x_scale / img_width)
+            centroid = (
+              ((centroid[0] * y_scale - y_min) / img_height + 1)/2, 
+              ((centroid[1] * x_scale - x_min) / img_width + 1)/2
+            )
 
             bbox = [
               bbox[0] * y_scale,
@@ -88,6 +94,13 @@ class GenerativeSequence(image_segmentation.GenerativeSequence):
               bbox[2] * y_scale,
               bbox[3] * x_scale,
             ]
+
+            mask = np.zeros((img_height, img_width), dtype=np.uint8)            
+            contour = np.array([[int(x[0][0] * x_scale), int(x[0][1] * y_scale)] for x in contour])
+            cv2.drawContours(mask, [contour], -1, 1, thickness=cv2.FILLED)
+            mask = mask[int(bbox[0]):int(bbox[2]), int(bbox[1]):int(bbox[3])].astype(np.uint8)
+            mask = cv2.resize(mask, (img_width//4, img_height//4), interpolation=cv2.INTER_NEAREST) > 0
+
             height = bbox[2] - bbox[0]
             width = bbox[3] - bbox[1]
             bbox[0] = (((bbox[0] - y_min) / img_height) + 1)/2
@@ -95,15 +108,10 @@ class GenerativeSequence(image_segmentation.GenerativeSequence):
             bbox[2] = (((height - grid_height) / img_height) + 1)/2
             bbox[3] = (((width - grid_width) / img_width) + 1)/2
 
-            contour = np.array([[int(x[0][0] * x_scale), int(x[0][1] * y_scale)] for x in contour])
-
-            mask = np.zeros((img_height, img_width), dtype=np.uint8)
-            cv2.drawContours(mask, [contour], -1, 1, thickness=cv2.FILLED)
-
-            Y["centroid"][i, grid_index] = centroid
             Y["detection"][i, grid_index] = bbox
-            Y["segmentation"][i, grid_index] = mask > 0
-            Y["classification"][i, grid_index] = label
+            Y["centroid"][i * self.__MAX_DETECTION_COUNT + grid_index] = centroid
+            Y["segmentation"][i * self.__MAX_DETECTION_COUNT + grid_index] = mask
+            Y["classification"][i * self.__MAX_DETECTION_COUNT + grid_index] = label
             grid_index += 1
 
     return X, Y
