@@ -2,6 +2,6 @@
 
 from .Sequence import Sequence
 from .GenerativeSequence import GenerativeSequence
-from .Utils import Utils
+from .Utils import *
 
-__all__ = ["Sequence", "Utils", "GenerativeSequence"]
+__all__ = ["Sequence", "GenerativeSequence"]

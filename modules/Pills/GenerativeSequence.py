@@ -14,8 +14,7 @@ class GenerativeSequence(image_segmentation.GenerativeSequence):
     self, 
     data_size:int, 
     batch_size:int, 
-    input_size:tuple[int, int] = (128, 128),
-    max_detection_count_root:int = 4,
+    input_size:tuple[int, int] = (512, 512),
     material_path:str = SOURCE_PATH, 
     label_path:str = LABEL_PATH, 
     background_images_path:str = BACKGROUND_IMAGEES_PATH,
@@ -29,8 +28,8 @@ class GenerativeSequence(image_segmentation.GenerativeSequence):
     self.__GENERATOR = Generator(material_path, label_path)
     self.__BACKGROUND_GENERATOR = Background(background_images_path)
     self.__INPUT_SIZE = input_size
-    self.__MAX_DETECTION_COUNT = max_detection_count_root ** 2
-    self.__MAX_DETECTION_COUNT_ROOT = max_detection_count_root
+    self.__GRID_SIZE = input_size[0] // 64
+    self.__MAX_DETECTION_COUNT = self.__GRID_SIZE ** 2
     
   def __random_choice(self):
     return random.choice([True, False])
@@ -51,11 +50,11 @@ class GenerativeSequence(image_segmentation.GenerativeSequence):
     X = np.zeros((batch_size, img_height, img_width, 3), dtype=np.float32)
 
     Y = {
-      "roi": np.zeros((batch_size, img_height, img_width), dtype=np.bool_),
-      "centroid": np.zeros((batch_size * self.__MAX_DETECTION_COUNT, 2), dtype=np.float32),
+      "roi": np.zeros((batch_size, img_height//4, img_width//4), dtype=np.bool_),
       "detection": np.zeros((batch_size, self.__MAX_DETECTION_COUNT, 4), dtype=np.float32),
-      "segmentation": np.zeros((batch_size * self.__MAX_DETECTION_COUNT, img_height //4, img_width//4), dtype=np.bool_),
-      "classification": np.zeros((batch_size * self.__MAX_DETECTION_COUNT), dtype=np.uint32)
+      "centroid": np.zeros((batch_size, self.__MAX_DETECTION_COUNT, 2), dtype=np.float32),
+      "segmentation": np.zeros((batch_size, self.__MAX_DETECTION_COUNT, img_height //4, img_width//4), dtype=np.bool_),
+      "classification": np.zeros((batch_size, self.__MAX_DETECTION_COUNT), dtype=np.uint32)
     }
 
     for i in range(len(indexes)):
@@ -65,15 +64,15 @@ class GenerativeSequence(image_segmentation.GenerativeSequence):
         x_scale = img_width / img.shape[1]
 
         X[i] = cv2.resize(img, (img_width, img_height)).astype(np.float32) / 255
-        Y["roi"][i] = cv2.resize(mask.astype(np.uint8), (img_width, img_height), interpolation=cv2.INTER_NEAREST) > 0
+        Y["roi"][i] = cv2.resize(mask.astype(np.uint8), (img_width//4, img_height//4), interpolation=cv2.INTER_NEAREST) > 0
         
         annotations = list(zip(labels, centroids, bboxes, contours))
 
-        grid_height, grid_width = img_height // self.__MAX_DETECTION_COUNT_ROOT, img_width // self.__MAX_DETECTION_COUNT_ROOT
+        grid_height, grid_width = img_height // self.__GRID_SIZE, img_width // self.__GRID_SIZE
         
         grid_index = 0
-        for row in range(self.__MAX_DETECTION_COUNT_ROOT):
-          for col in range(self.__MAX_DETECTION_COUNT_ROOT):
+        for row in range(self.__GRID_SIZE):
+          for col in range(self.__GRID_SIZE):
             y_min = row * grid_height
             x_min = col * grid_width
             center = (y_min + grid_height // 2, x_min + grid_width // 2)
@@ -105,13 +104,13 @@ class GenerativeSequence(image_segmentation.GenerativeSequence):
             width = bbox[3] - bbox[1]
             bbox[0] = (((bbox[0] - y_min) / img_height) + 1)/2
             bbox[1] = (((bbox[1] - x_min) / img_width) + 1)/2
-            bbox[2] = (((height - grid_height) / img_height) + 1)/2
-            bbox[3] = (((width - grid_width) / img_width) + 1)/2
+            bbox[2] = height / img_height
+            bbox[3] = width / img_width
 
             Y["detection"][i, grid_index] = bbox
-            Y["centroid"][i * self.__MAX_DETECTION_COUNT + grid_index] = centroid
-            Y["segmentation"][i * self.__MAX_DETECTION_COUNT + grid_index] = mask
-            Y["classification"][i * self.__MAX_DETECTION_COUNT + grid_index] = label
+            Y["centroid"][i, grid_index] = centroid
+            Y["segmentation"][i, grid_index] = mask
+            Y["classification"][i, grid_index] = label
             grid_index += 1
 
     return X, Y
