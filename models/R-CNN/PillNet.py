@@ -1,6 +1,7 @@
 import tensorflow as tf
 from tensorflow.keras import layers, Model
-from image_segmentation.Utils import *
+from image_segmentation.Utils import IoUMetric, DiceMetric, PixelAccuracy
+
 
 class PillNet(Model):
   def __init__(
@@ -13,11 +14,10 @@ class PillNet(Model):
   ):
     super(PillNet, self).__init__(**kwargs)
 
-    self.__INPUT_SHAPE = input_shape
-    self.__GRID_SIZE = input_shape[0] // 64
     self.__BATCH_SIZE = batch_size
-    self.__INITIAL_LR = initial_lr
     self.__NUM_CLASSES = num_classes
+    self.__INPUT_SHAPE = input_shape
+    self.__INITIAL_LR = initial_lr
     
     # S x S x 3 -> S/4 x S/4 x 1
     self.roi = tf.keras.Sequential([
@@ -98,23 +98,30 @@ class PillNet(Model):
     
   def build(self):
     raise Exception("PillNet is already built")
+
+  def grid_size(self):
+    return self.__INPUT_SHAPE[0] // 64
     
   def call(self, inputs, training=False, gt_detections=None):
     # input: (BATCH, S, S, 3)
     # Grid: G x G, G = S/64
+    batch_size = tf.shape(inputs)[0]
     
     # roi_mask: (BATCH, S/4, S/4, 1)
     roi_mask = self.roi(inputs)
 
     # detection_offsets: (BATCH, G, G, 4)
     detection_offsets = self.detection_head(roi_mask)
+    grid_size = tf.shape(detection_offsets)[1]
+    grid_area = grid_size * grid_size
     
     if training and gt_detections is not None:
       # cropped_regions: (BATCH * G*G, S/4, S/4, 3)
-      cropped_regions = self.__crop_regions(inputs, gt_detections)
+      cropped_regions = self.__crop_regions(inputs, gt_detections, grid_size)
     else:
+      detection_offsets = tf.reshape(detection_offsets, [batch_size, grid_area, 4])
       # cropped_regions: (BATCH * G*G, S/4, S/4, 3)
-      cropped_regions = self.__crop_regions(inputs, detection_offsets)
+      cropped_regions = self.__crop_regions(inputs, detection_offsets, grid_size)
 
     # feature_map: (BATCH * G*G, S/4, S/4, 64)
     feature_map = self.feature_extractor(cropped_regions)
@@ -125,12 +132,11 @@ class PillNet(Model):
     # classification: (BATCH * G*G, num_classes)
     classification = self.classification_head(feature_map)
     
-    grid_size = self.__GRID_SIZE * self.__GRID_SIZE
     segmentation = tf.reshape(segmentation, [
-      self.__BATCH_SIZE, grid_size, self.__INPUT_SHAPE[0]//4, self.__INPUT_SHAPE[1]//4])
-    centroid = tf.reshape(centroid, [self.__BATCH_SIZE, grid_size, 2])
-    classification = tf.reshape(classification, [self.__BATCH_SIZE, grid_size, self.classification_head.layers[-1].units])
-    
+      batch_size, grid_area, self.__INPUT_SHAPE[0]//4, self.__INPUT_SHAPE[1]//4])
+    centroid = tf.reshape(centroid, [batch_size, grid_area, 2])
+    classification = tf.reshape(classification, [batch_size, grid_area, self.classification_head.layers[-1].units])
+
     return {
       "roi": roi_mask,
       "detection": detection_offsets,
@@ -139,8 +145,8 @@ class PillNet(Model):
       "classification": classification
     }
   
-  def __crop_regions(self, img, detection_offsets):
-    g = self.__GRID_SIZE
+  @tf.function(jit_compile=False)
+  def __crop_regions(self, img, detection_offsets, g):
     cols, rows = tf.meshgrid(tf.range(g, dtype=tf.float32), tf.range(g, dtype=tf.float32))
     cols = tf.reshape(cols, [-1]) # (g*g,) [0, ... , g-1, 0, ... , g-1, ...]
     rows = tf.reshape(rows, [-1]) # (g*g,) [0, 0, ... , 0, 1, 1, ... , g-1]
@@ -167,78 +173,77 @@ class PillNet(Model):
 
     y_min = tf.clip_by_value(y_min, 0.0, img_height -1.0)
     x_min = tf.clip_by_value(x_min, 0.0, img_width -1.0)
-    height = tf.clip_by_value(height, 1.0, img_height - y_min)
-    width = tf.clip_by_value(width, 1.0, img_width - x_min)
-
-    # y_max = y_min + height #
-    # x_max = x_min + width #
+    # height = tf.clip_by_value(height, 1.0, img_height - y_min)
+    # width = tf.clip_by_value(width, 1.0, img_width - x_min) 
+    y_max = y_min + height #
+    x_max = x_min + width #
     
-    # y_min = y_min / img_height #
-    # x_min = x_min / img_width #
-    # y_max = y_max / img_height #
-    # x_max = x_max / img_width #
+    y_min = y_min / img_height #
+    x_min = x_min / img_width #
+    y_max = y_max / img_height #
+    x_max = x_max / img_width #
 
-    # boxes = tf.stack([y_min, x_min, y_max, x_max], axis=-1) #
+    boxes = tf.stack([y_min, x_min, y_max, x_max], axis=-1) #
 
-    # box_indices = tf.range(batch_size, dtype=tf.int32) #
-    # box_indices = tf.repeat(box_indices, repeats=g*g) #
+    box_indices = tf.range(batch_size, dtype=tf.int32) #
+    box_indices = tf.repeat(box_indices, repeats=g*g) #
 
-    img = tf.image.convert_image_dtype(img, tf.uint8)
-    img_map_repeated = tf.tile(img[:, None, :, :, :], [1, g*g, 1, 1, 1])
-    img_map_repeated = tf.reshape(img_map_repeated, [
-      batch_size*g*g, tf.shape(img)[1], tf.shape(img)[2], tf.shape(img)[3]
-    ])
-    cropped_regions = tf.map_fn(
-      PillNet.__crop,(
-        img_map_repeated,  
-        y_min, x_min, height, width
-      ), fn_output_signature= tf.TensorSpec(shape=(None, None, None), dtype=tf.uint8)
-    )
+    # img = tf.image.convert_image_dtype(img, tf.uint8)
+    # img_map_repeated = tf.tile(img[:, None, :, :, :], [1, g*g, 1, 1, 1])
+    # img_map_repeated = tf.reshape(img_map_repeated, [
+    #   batch_size*g*g, tf.shape(img)[1], tf.shape(img)[2], tf.shape(img)[3]
+    # ])
+    # cropped_regions = tf.map_fn(
+    #   PillNet.__crop,(
+    #     img_map_repeated,  
+    #     y_min, x_min, height, width
+    #   ), fn_output_signature= tf.TensorSpec(shape=(None, None, None), dtype=tf.uint8)
+    # )
 
     crop_h = tf.cast(img_height, tf.int32) // 4
     crop_w = tf.cast(img_width, tf.int32) // 4
 
-    cropped_regions = tf.image.resize(cropped_regions, (crop_h, crop_w), method='bilinear')
-    cropped_regions = tf.image.convert_image_dtype(cropped_regions, tf.float32)
+    # cropped_regions = tf.image.resize(cropped_regions, (crop_h, crop_w), method='bilinear')
+    # cropped_regions = tf.image.convert_image_dtype(cropped_regions, tf.float32)
 
-    cropped_regions = tf.reshape(
-      cropped_regions, [
-        batch_size * g*g, crop_h, crop_w, tf.shape(img)[-1]
-      ]
-    )
+    # cropped_regions = tf.reshape(
+    #   cropped_regions, [
+    #     batch_size * g*g, crop_h, crop_w, tf.shape(img)[-1]
+    #   ]
+    # )
     
-    # cropped_regions = self.__crop_and_resize(
-    #   img, 
-    #   boxes, 
-    #   box_indices, 
-    #   (crop_h, crop_w)
-    # ) #
+    cropped_regions = self.__crop_and_resize(
+      img, 
+      boxes, 
+      box_indices, 
+      (crop_h, crop_w)
+    ) #
 
     return cropped_regions
   
-  # @staticmethod
-  # @tf.function(jit_compile=False)
-  # def __crop_and_resize(img, boxes, box_idx, crop_size):
-  #   return tf.image.crop_and_resize(
-  #     img, 
-  #     boxes = boxes, 
-  #     box_indices = box_idx, 
-  #     crop_size = crop_size,
-  #     method='bilinear'
-  #   )
-  
   @staticmethod
-  def __crop(args):
-    img, y, x, h, w = args
-    return tf.image.crop_to_bounding_box(
+  @tf.function(jit_compile=False)
+  def __crop_and_resize(img, boxes, box_idx, crop_size):
+    return tf.image.crop_and_resize(
       img, 
-      tf.cast(y, tf.int32), 
-      tf.cast(x, tf.int32), 
-      tf.cast(h, tf.int32), 
-      tf.cast(w, tf.int32)
+      boxes = boxes, 
+      box_indices = box_idx, 
+      crop_size = crop_size,
+      method='bilinear'
     )
+  
+  # @staticmethod
+  # def __crop(args):
+  #   img, y, x, h, w = args
+  #   return tf.image.crop_to_bounding_box(
+  #     img, 
+  #     tf.cast(y, tf.int32), 
+  #     tf.cast(x, tf.int32), 
+  #     tf.cast(h, tf.int32), 
+  #     tf.cast(w, tf.int32)
+  #   )
 
-  def compile(self):
+  def compile(self, **kwargs):
     super(PillNet, self).compile(
       optimizer=self.optimizer, 
       loss={
@@ -248,13 +253,14 @@ class PillNet(Model):
         "centroid": self.loss_fn_centroid,
         "classification": self.loss_fn_classification  
       }, 
-      metrics={
-        "roi": [iou_metric, dice_metric, pixel_accuracy],
-        "detection": ["mae"],
-        "segmentation": [iou_metric, dice_metric, pixel_accuracy],
-        "centroid": ["mae"],
-        "classification": ["accuracy", "precision", "recall", "f1"]
-      }
+      # metrics={
+      #   "roi": [IoUMetric(), DiceMetric(), PixelAccuracy()],
+      #   "detection": ["mae"],
+      #   "segmentation": [IoUMetric(), DiceMetric(), PixelAccuracy()],
+      #   "centroid": ["mae"],
+      #   "classification": ["accuracy"]
+      # },
+      **kwargs
     )
 
   def train_step(self, data):
@@ -262,26 +268,28 @@ class PillNet(Model):
     
     with tf.GradientTape() as tape:
       y_pred = self(X, training=True, gt_detections=Y["detection"])
+      grid_size = tf.shape(y_pred["detection"])[1]
+      batch_size = tf.shape(X)[0]
 
       roi_loss = self.loss_fn_roi(Y["roi"], y_pred["roi"])
 
-      grid_size = self.__GRID_SIZE * self.__GRID_SIZE * self.__BATCH_SIZE
-      y_centroid = tf.reshape(Y["centroid"], [grid_size, 2])
-      y_pred_centroid = tf.reshape(y_pred["centroid"], [grid_size, 2])
+      grid_area = grid_size * grid_size * batch_size
+      y_centroid = tf.reshape(Y["centroid"], [grid_area, 2])
+      y_pred_centroid = tf.reshape(y_pred["centroid"], [grid_area, 2])
       centroid_loss = self.loss_fn_centroid(y_centroid, y_pred_centroid)
 
-      y_detection = tf.reshape(Y["detection"], [grid_size, 4])
-      y_pred_detection = tf.reshape(y_pred["detection"], [grid_size, 4])
+      y_detection = tf.reshape(Y["detection"], [grid_area, 4])
+      y_pred_detection = tf.reshape(y_pred["detection"], [grid_area, 4])
       detection_loss = self.loss_fn_detection(y_detection, y_pred_detection)
 
       height = self.__INPUT_SHAPE[0] // 4
       width = self.__INPUT_SHAPE[1] // 4
-      y_segmentation = tf.reshape(Y["segmentation"], [grid_size, height, width])
-      y_pred_segmentation = tf.reshape(y_pred["segmentation"], [grid_size, height, width])
+      y_segmentation = tf.reshape(Y["segmentation"], [grid_area, height, width])
+      y_pred_segmentation = tf.reshape(y_pred["segmentation"], [grid_area, height, width])
       segmentation_loss = self.loss_fn_segmentation(y_segmentation, y_pred_segmentation)
 
-      y_classification = tf.reshape(Y["classification"], [grid_size])
-      y_pred_classification = tf.reshape(y_pred["classification"], [grid_size, self.__NUM_CLASSES])
+      y_classification = tf.reshape(Y["classification"], [grid_area])
+      y_pred_classification = tf.reshape(y_pred["classification"], [grid_area, self.__NUM_CLASSES])
       classification_loss = self.loss_fn_classification(y_classification, y_pred_classification)
       
       total_loss = roi_loss + detection_loss + segmentation_loss + centroid_loss + classification_loss
@@ -306,13 +314,21 @@ class PillNet(Model):
   def get_config(self):
     config = super(PillNet, self).get_config()
     config.update({
+      "batch_size": self.__BATCH_SIZE,
+      "num_classes": self.__NUM_CLASSES,
+      "input_shape": self.__INPUT_SHAPE,
       "initial_lr": self.__INITIAL_LR
     })
     return config
   
   @classmethod
   def from_config(cls, config):
-    return cls(**config)
+    return cls(
+      batch_size = config.get("batch_size", 4),
+      num_classes = config.get("num_classes", 50),
+      input_shape = config.get("input_shape", (256, 256, 3)),
+      initial_lr = config.get("initial_lr", 0.001)
+    )
 
 # def test():
 #   import numpy as np 
