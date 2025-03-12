@@ -1,7 +1,7 @@
 import tensorflow as tf
 from tensorflow.keras import layers, Model
-from image_segmentation.Utils import IoUMetric, DiceMetric, PixelAccuracy
-
+from image_segmentation.loss import dice_loss, dice_using_position_loss, iou_loss, pixel_accuracy_loss, weighted_huber_loss
+from image_segmentation.Metrics import IoUMetric, DiceMetric, PixelAccuracy
 
 class PillNet(Model):
   def __init__(
@@ -18,7 +18,13 @@ class PillNet(Model):
     self.__NUM_CLASSES = num_classes
     self.__INPUT_SHAPE = input_shape
     self.__INITIAL_LR = initial_lr
+
+    # 굳이 모델이 인식을 해야 할까? 일종의 attention 사용해서 비교를 하는건 어떨까?
+    # 현재 metric의 부재와 잘못된 loss 함수로 인해 학습이 잘 안되고 있음
     
+    # 이거 왜케 큼? 줄이자
+    # 스킵커넥션 왜 안씀? inception 구조도 보자
+    # 커널 크기를 키우면 
     # S x S x 3 -> S/4 x S/4 x 1
     self.roi = tf.keras.Sequential([
       layers.MaxPooling2D((4, 4), strides=4, padding="same"), # S/4 x S/4 x 3
@@ -81,10 +87,10 @@ class PillNet(Model):
       layers.Dense(num_classes, activation='softmax') # num_classes
     ], name="ClassificationHead")
 
-    self.loss_fn_roi = tf.keras.losses.BinaryCrossentropy()
-    self.loss_fn_detection = tf.keras.losses.Huber()
-    self.loss_fn_segmentation = tf.keras.losses.BinaryCrossentropy()
-    self.loss_fn_centroid = tf.keras.losses.Huber()
+    self.loss_fn_roi = dice_loss
+    self.loss_fn_detection = dice_using_position_loss
+    self.loss_fn_segmentation = dice_loss
+    self.loss_fn_centroid = weighted_huber_loss(100)
     self.loss_fn_classification = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=False)
     self.optimizer = tf.keras.optimizers.AdamW(learning_rate=self.__INITIAL_LR)
     
@@ -155,28 +161,26 @@ class PillNet(Model):
     rows = tf.tile(rows, [batch_size]) # (batch_size*g*g,)
     cols = tf.tile(cols, [batch_size]) # (batch_size*g*g,)
 
-    oy, ox, oh, ow = tf.split(detection_offsets, 4, axis=-1)
-    oy = tf.reshape(oy, [-1]) # (batch_size*g*g,) [y1, y2, ... , yg, y1, y2, ... , yg, ...]
-    ox = tf.reshape(ox, [-1]) 
-    oh = tf.reshape(oh, [-1])
-    ow = tf.reshape(ow, [-1])
+    ly, lx, ry, rx = tf.split(detection_offsets, 4, axis=-1)
+    ly = tf.reshape(ly, [-1]) # (batch_size*g*g,) [y1, y2, ... , yg, y1, y2, ... , yg, ...]
+    lx = tf.reshape(lx, [-1]) 
+    ry = tf.reshape(ry, [-1])
+    rx = tf.reshape(rx, [-1])
 
     img_height = tf.cast(tf.shape(img)[1], tf.float32)
     img_width = tf.cast(tf.shape(img)[2], tf.float32)
     grid_height = img_height / tf.cast(g, tf.float32)  
     grid_width = img_width / tf.cast(g, tf.float32)    
 
-    y_min = rows * grid_height + ((oy * 2.0) - 1.0) * img_height
-    x_min = cols * grid_width  + ((ox * 2.0) - 1.0) * img_width
-    height = ((oh * 2.0) - 1.0) * img_height
-    width = ((ow * 2.0) - 1.0) * img_width
+    y_min = rows * grid_height + ((ly * 2.0) - 1.0) * img_height
+    x_min = cols * grid_width  + ((lx * 2.0) - 1.0) * img_width
+    y_max = rows * grid_height + ((ry * 2.0) - 1.0) * img_height
+    x_max = cols * grid_width + ((rx * 2.0) - 1.0) * img_width
 
     y_min = tf.clip_by_value(y_min, 0.0, img_height -1.0)
     x_min = tf.clip_by_value(x_min, 0.0, img_width -1.0)
-    # height = tf.clip_by_value(height, 1.0, img_height - y_min)
-    # width = tf.clip_by_value(width, 1.0, img_width - x_min) 
-    y_max = y_min + height #
-    x_max = x_min + width #
+    y_max = tf.clip_by_value(y_max, 1.0, img_height)
+    x_max = tf.clip_by_value(x_max, 1.0, img_width)
     
     y_min = y_min / img_height #
     x_min = x_min / img_width #
@@ -188,30 +192,9 @@ class PillNet(Model):
     box_indices = tf.range(batch_size, dtype=tf.int32) #
     box_indices = tf.repeat(box_indices, repeats=g*g) #
 
-    # img = tf.image.convert_image_dtype(img, tf.uint8)
-    # img_map_repeated = tf.tile(img[:, None, :, :, :], [1, g*g, 1, 1, 1])
-    # img_map_repeated = tf.reshape(img_map_repeated, [
-    #   batch_size*g*g, tf.shape(img)[1], tf.shape(img)[2], tf.shape(img)[3]
-    # ])
-    # cropped_regions = tf.map_fn(
-    #   PillNet.__crop,(
-    #     img_map_repeated,  
-    #     y_min, x_min, height, width
-    #   ), fn_output_signature= tf.TensorSpec(shape=(None, None, None), dtype=tf.uint8)
-    # )
-
     crop_h = tf.cast(img_height, tf.int32) // 4
     crop_w = tf.cast(img_width, tf.int32) // 4
 
-    # cropped_regions = tf.image.resize(cropped_regions, (crop_h, crop_w), method='bilinear')
-    # cropped_regions = tf.image.convert_image_dtype(cropped_regions, tf.float32)
-
-    # cropped_regions = tf.reshape(
-    #   cropped_regions, [
-    #     batch_size * g*g, crop_h, crop_w, tf.shape(img)[-1]
-    #   ]
-    # )
-    
     cropped_regions = self.__crop_and_resize(
       img, 
       boxes, 
@@ -253,13 +236,13 @@ class PillNet(Model):
         "centroid": self.loss_fn_centroid,
         "classification": self.loss_fn_classification  
       }, 
-      # metrics={
-      #   "roi": [IoUMetric(), DiceMetric(), PixelAccuracy()],
-      #   "detection": ["mae"],
-      #   "segmentation": [IoUMetric(), DiceMetric(), PixelAccuracy()],
-      #   "centroid": ["mae"],
-      #   "classification": ["accuracy"]
-      # },
+      metrics={
+        "roi": [IoUMetric(), DiceMetric(), PixelAccuracy()],
+        "detection": ["mae"],
+        "segmentation": [IoUMetric(), DiceMetric(), PixelAccuracy()],
+        "centroid": ["mae"],
+        "classification": ["accuracy"]
+      },
       **kwargs
     )
 
@@ -270,10 +253,13 @@ class PillNet(Model):
       y_pred = self(X, training=True, gt_detections=Y["detection"])
       grid_size = tf.shape(y_pred["detection"])[1]
       batch_size = tf.shape(X)[0]
-
-      roi_loss = self.loss_fn_roi(Y["roi"], y_pred["roi"])
-
       grid_area = grid_size * grid_size * batch_size
+
+      roi_height, roi_width = Y["roi"].shape[1], Y["roi"].shape[2]
+      roi_true = tf.reshape(tf.cast(Y["roi"], tf.float32), [batch_size, roi_height, roi_width, 1])
+      roi_pred = tf.reshape(tf.cast(y_pred["roi"] > 0.5, tf.float32), [batch_size, roi_height, roi_width, 1])
+      roi_loss = self.loss_fn_roi(roi_true, roi_pred)
+
       y_centroid = tf.reshape(Y["centroid"], [grid_area, 2])
       y_pred_centroid = tf.reshape(y_pred["centroid"], [grid_area, 2])
       centroid_loss = self.loss_fn_centroid(y_centroid, y_pred_centroid)
@@ -282,10 +268,9 @@ class PillNet(Model):
       y_pred_detection = tf.reshape(y_pred["detection"], [grid_area, 4])
       detection_loss = self.loss_fn_detection(y_detection, y_pred_detection)
 
-      height = self.__INPUT_SHAPE[0] // 4
-      width = self.__INPUT_SHAPE[1] // 4
-      y_segmentation = tf.reshape(Y["segmentation"], [grid_area, height, width])
-      y_pred_segmentation = tf.reshape(y_pred["segmentation"], [grid_area, height, width])
+      seg_height, seg_width = Y["segmentation"].shape[2], Y["segmentation"].shape[3]
+      y_segmentation = tf.reshape(tf.cast(Y["segmentation"], tf.float32), [grid_area, seg_height, seg_width, 1])
+      y_pred_segmentation = tf.reshape(tf.cast(y_pred["segmentation"], tf.float32), [grid_area, seg_height, seg_width, 1])
       segmentation_loss = self.loss_fn_segmentation(y_segmentation, y_pred_segmentation)
 
       y_classification = tf.reshape(Y["classification"], [grid_area])
@@ -330,25 +315,13 @@ class PillNet(Model):
       initial_lr = config.get("initial_lr", 0.001)
     )
 
-# def test():
-#   import numpy as np 
+def test():
+  model = PillNet(4, 50, (256, 256, 3))
+  print(model.summary())
+  model.compile(jit_compile=False)
+
+  print("🟩 Model test done")
+
   
-#   model = PillNet()
-#   model.build(4, (128, 128, 3))
-#   print(model.summary())
-#   model.compile()
-
-#   num_samples = 16
-#   X_dummy = np.random.rand(num_samples, 128, 128, 3).astype(np.float32)  # 입력 이미지
-#   Y_dummy = np.random.randint(0, 2, (num_samples, 128, 128, 2)).astype(np.float32)  # 이진 마스크 (0: 배경, 1: 알약)
-
-#   model.fit(X_dummy, Y_dummy, epochs=5, batch_size=4, verbose=1)
-
-#   X_test = np.random.rand(4, 128, 128, 3).astype(np.float32)
-#   Y_test = np.random.randint(0, 2, (4, 128, 128, 2)).astype(np.float32)
-
-#   loss = model.evaluate(X_test, Y_test)
-#   print(f"🔍 테스트 손실: {loss}")
-  
-# if __name__ == "__main__":
-#   test()
+if __name__ == "__main__":
+  test()

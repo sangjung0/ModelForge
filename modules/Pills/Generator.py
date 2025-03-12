@@ -45,12 +45,11 @@ class Generator:
     background:np.ndarray, 
     number_of_objects:int,
     scaling:int = 10,
-    max_try_of_random_position:int = 100,
-    max_try_of_adaptive_quadtree:int = 100,
+    max_try_of_random_position:int = 5,
+    max_try_of_adaptive_quadtree:int = 5,
     padding:int = 0,
     bias:bool = False,
     regeneration:bool = False,
-    draw:bool = False
   ):
     objects = [(img, label) for label, imgs in self.__PILLS_IMGS_DICT.items() for img in imgs]
     objects = random.sample(objects, number_of_objects)
@@ -74,10 +73,8 @@ class Generator:
     centroids = centroid_at_mask(mask)
     bboxes = bbox_at_mask(mask)
     contours = contours_at_mask(mask)
-    if draw:
-      img = draw_at_position(background, objects, positions)
-      return img, mask, (objects, labels, centroids, bboxes, contours)
-    return mask, (objects, labels, centroids, bboxes, contours)
+    img = draw_at_position(background, objects, positions)
+    return img, mask, (objects, labels, centroids, bboxes, contours)
 
     
     
