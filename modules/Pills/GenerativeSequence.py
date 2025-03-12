@@ -100,12 +100,10 @@ class GenerativeSequence(image_segmentation.GenerativeSequence):
             mask = mask[int(bbox[0]):int(bbox[2]), int(bbox[1]):int(bbox[3])].astype(np.uint8)
             mask = cv2.resize(mask, (img_width//4, img_height//4), interpolation=cv2.INTER_NEAREST) > 0
 
-            height = bbox[2] - bbox[0]
-            width = bbox[3] - bbox[1]
             bbox[0] = (((bbox[0] - y_min) / img_height) + 1)/2
             bbox[1] = (((bbox[1] - x_min) / img_width) + 1)/2
-            bbox[2] = height / img_height
-            bbox[3] = width / img_width
+            bbox[2] = (((bbox[2] - y_min) / img_height) + 1)/2
+            bbox[3] = (((bbox[3] - x_min) / img_width) + 1)/2
 
             Y["detection"][i, grid_index] = bbox
             Y["centroid"][i, grid_index] = centroid
@@ -121,7 +119,7 @@ class GenerativeSequence(image_segmentation.GenerativeSequence):
       self.__BACKGROUND_GENERATOR.generate(),
       random.randint(1, 20),
       10, 3, 3, random.randint(0, 10),
-      self.__random_choice(), True, True
+      self.__random_choice(), True
     )
 
     b_mask = mask[:, :] > 0
@@ -144,3 +142,37 @@ class GenerativeSequence(image_segmentation.GenerativeSequence):
       img = gaussian_blur(img, ksize=random.randint(1, 5) * 2 + 1)
 
     return cv2.cvtColor(img, cv2.COLOR_RGBA2RGB), mask, annotations[1:]
+  
+def test():
+  DATA_SIZE = 10_000_000
+  BATCH_SIZE = 1
+  INPUT_SHAPE = (256, 256, 3)
+  generative_sequence = GenerativeSequence(DATA_SIZE, BATCH_SIZE, INPUT_SHAPE[:2], use_multiprocessing=True, workers=16)
+  
+  print("🟩 Test started")
+  for i in range(100_000):
+    X, Y = generative_sequence[i]
+    if len(X) != BATCH_SIZE:
+      print(X.shape)
+      raise Exception(f"Invalid length: {len(X)}")
+    img = X[0]
+    
+    if img.shape != INPUT_SHAPE:
+      raise Exception(f"Invalid shape: {img.shape}")
+    if Y["roi"].shape != (BATCH_SIZE, 64, 64):
+      raise Exception(f"Invalid shape: {Y['roi'].shape}")
+    if Y["detection"].shape != (BATCH_SIZE, 16, 4):
+      raise Exception(f"Invalid shape: {Y['detection'].shape}")
+    if Y["centroid"].shape != (BATCH_SIZE, 16, 2):
+      raise Exception(f"Invalid shape: {Y['centroid'].shape}")
+    if Y["segmentation"].shape != (BATCH_SIZE, 16, 64, 64):
+      raise Exception(f"Invalid shape: {Y['segmentation'].shape}")
+    if Y["classification"].shape != (BATCH_SIZE, 16):
+      raise Exception(f"Invalid shape: {Y['classification'].shape}")
+    if i % 10 == 0: 
+      print(i)
+
+  print("🟩 Test passed")
+
+if __name__ == "__main__":
+  test()
