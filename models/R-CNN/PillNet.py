@@ -1,7 +1,8 @@
 import tensorflow as tf
 from tensorflow.keras import layers, Model
+from tensorflow.keras import metrics
 from image_segmentation.loss import dice_loss, dice_using_position_loss, iou_loss, pixel_accuracy_loss, weighted_huber_loss
-from image_segmentation.Metrics import IoUMetric, DiceMetric, PixelAccuracy
+from image_segmentation.Metrics import DiceUsingPositionMetric, IoUMetric, DiceMetric, PixelAccuracy
 
 class PillNet(Model):
   def __init__(
@@ -14,16 +15,16 @@ class PillNet(Model):
   ):
     super(PillNet, self).__init__(**kwargs)
 
-    self.__BATCH_SIZE = batch_size
-    self.__NUM_CLASSES = num_classes
-    self.__INPUT_SHAPE = input_shape
-    self.__INITIAL_LR = initial_lr
+    self._BATCH_SIZE = batch_size
+    self._NUM_CLASSES = num_classes
+    self._INPUT_SHAPE = input_shape
+    self._INITIAL_LR = initial_lr
 
     # 굳이 모델이 인식을 해야 할까? 일종의 attention 사용해서 비교를 하는건 어떨까?
     # 현재 metric의 부재와 잘못된 loss 함수로 인해 학습이 잘 안되고 있음
     
     # 이거 왜케 큼? 줄이자
-    # 스킵커넥션 왜 안씀? inception 구조도 보자
+    # 스킵커넥션 왜 안씀? inception 구조도 보자, 증명된 최신 기술을 너무 안씀
     # 커널 크기를 키우면 
     # S x S x 3 -> S/4 x S/4 x 1
     self.roi = tf.keras.Sequential([
@@ -87,14 +88,35 @@ class PillNet(Model):
       layers.Dense(num_classes, activation='softmax') # num_classes
     ], name="ClassificationHead")
 
+    self.metrics_roi_iou = IoUMetric()
+    self.metrics_roi_dice = DiceMetric()
+    self.metrics_roi_pixel_accuracy = PixelAccuracy()
+    self.metrics_detection_dice_using_position = DiceUsingPositionMetric()
+    self.metrics_segmentation_iou = IoUMetric()
+    self.metrics_segmentation_dice = DiceMetric()
+    self.metrics_segmentation_pixel_accuracy = PixelAccuracy()
+    self.metrics_centroid = metrics.MeanAbsoluteError()
+    self.metrics_classification = metrics.SparseCategoricalAccuracy()
     self.loss_fn_roi = dice_loss
     self.loss_fn_detection = dice_using_position_loss
     self.loss_fn_segmentation = dice_loss
     self.loss_fn_centroid = weighted_huber_loss(100)
     self.loss_fn_classification = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=False)
-    self.optimizer = tf.keras.optimizers.AdamW(learning_rate=self.__INITIAL_LR)
-    
-    self.__build(batch_size, self.__INPUT_SHAPE)
+    self.optimizer = tf.keras.optimizers.AdamW(learning_rate=self._INITIAL_LR)
+
+  @property
+  def metrics(self):
+    return [
+      self.metrics_roi_iou,
+      self.metrics_roi_dice,
+      self.metrics_roi_pixel_accuracy,
+      self.metrics_detection_dice_using_position,
+      self.metrics_segmentation_iou,
+      self.metrics_segmentation_dice,
+      self.metrics_segmentation_pixel_accuracy,
+      self.metrics_centroid,
+      self.metrics_classification,
+    ]
   
   def __build(self, batch_size:int, input_shape:tuple[int, int, int]):
     super(PillNet, self).build(input_shape=(batch_size, *input_shape))
@@ -103,10 +125,10 @@ class PillNet(Model):
     self(dummy_input)
     
   def build(self):
-    raise Exception("PillNet is already built")
+    self.__build(self._BATCH_SIZE, self._INPUT_SHAPE)
 
   def grid_size(self):
-    return self.__INPUT_SHAPE[0] // 64
+    return self._INPUT_SHAPE[0] // 64
     
   def call(self, inputs, training=False, gt_detections=None):
     # input: (BATCH, S, S, 3)
@@ -123,11 +145,11 @@ class PillNet(Model):
     
     if training and gt_detections is not None:
       # cropped_regions: (BATCH * G*G, S/4, S/4, 3)
-      cropped_regions = self.__crop_regions(inputs, gt_detections, grid_size)
+      cropped_regions = self._crop_regions(inputs, gt_detections, grid_size)
     else:
-      detection_offsets = tf.reshape(detection_offsets, [batch_size, grid_area, 4])
+      detection_offsets = tf.reshape(detection_offsets, [batch_size, grid_size, grid_size, 4])
       # cropped_regions: (BATCH * G*G, S/4, S/4, 3)
-      cropped_regions = self.__crop_regions(inputs, detection_offsets, grid_size)
+      cropped_regions = self._crop_regions(inputs, detection_offsets, grid_size)
 
     # feature_map: (BATCH * G*G, S/4, S/4, 64)
     feature_map = self.feature_extractor(cropped_regions)
@@ -139,7 +161,7 @@ class PillNet(Model):
     classification = self.classification_head(feature_map)
     
     segmentation = tf.reshape(segmentation, [
-      batch_size, grid_area, self.__INPUT_SHAPE[0]//4, self.__INPUT_SHAPE[1]//4])
+      batch_size, grid_area, self._INPUT_SHAPE[0]//4, self._INPUT_SHAPE[1]//4])
     centroid = tf.reshape(centroid, [batch_size, grid_area, 2])
     classification = tf.reshape(classification, [batch_size, grid_area, self.classification_head.layers[-1].units])
 
@@ -152,7 +174,7 @@ class PillNet(Model):
     }
   
   @tf.function(jit_compile=False)
-  def __crop_regions(self, img, detection_offsets, g):
+  def _crop_regions(self, img, detection_offsets, g):
     cols, rows = tf.meshgrid(tf.range(g, dtype=tf.float32), tf.range(g, dtype=tf.float32))
     cols = tf.reshape(cols, [-1]) # (g*g,) [0, ... , g-1, 0, ... , g-1, ...]
     rows = tf.reshape(rows, [-1]) # (g*g,) [0, 0, ... , 0, 1, 1, ... , g-1]
@@ -195,7 +217,7 @@ class PillNet(Model):
     crop_h = tf.cast(img_height, tf.int32) // 4
     crop_w = tf.cast(img_width, tf.int32) // 4
 
-    cropped_regions = self.__crop_and_resize(
+    cropped_regions = self._crop_and_resize(
       img, 
       boxes, 
       box_indices, 
@@ -206,7 +228,7 @@ class PillNet(Model):
   
   @staticmethod
   @tf.function(jit_compile=False)
-  def __crop_and_resize(img, boxes, box_idx, crop_size):
+  def _crop_and_resize(img, boxes, box_idx, crop_size):
     return tf.image.crop_and_resize(
       img, 
       boxes = boxes, 
@@ -229,6 +251,7 @@ class PillNet(Model):
   def compile(self, **kwargs):
     super(PillNet, self).compile(
       optimizer=self.optimizer, 
+      # loss=lambda y_true, y_pred: 0,
       loss={
         "roi": self.loss_fn_roi,
         "detection": self.loss_fn_detection,
@@ -236,15 +259,63 @@ class PillNet(Model):
         "centroid": self.loss_fn_centroid,
         "classification": self.loss_fn_classification  
       }, 
-      metrics={
-        "roi": [IoUMetric(), DiceMetric(), PixelAccuracy()],
-        "detection": ["mae"],
-        "segmentation": [IoUMetric(), DiceMetric(), PixelAccuracy()],
-        "centroid": ["mae"],
-        "classification": ["accuracy"]
-      },
+      # metrics={
+      #   "roi": [IoUMetric(), DiceMetric(), PixelAccuracy()],
+      #   "detection": [DiceUsingPositionMetric()],
+      #   "segmentation": [IoUMetric(), DiceMetric(), PixelAccuracy()],
+      #   "centroid": ["mae"],
+      #   "classification": ["accuracy"],
+      #   "total": ["mae"]
+      # },
       **kwargs
     )
+    
+  def test_step(self, data):
+    X, Y = data
+
+    y_pred = self(X, training=False, gt_detections=Y["detection"])
+    grid_size = tf.shape(y_pred["detection"])[1]
+    batch_size = tf.shape(X)[0]
+    grid_area = batch_size * grid_size * grid_size 
+
+    roi_height, roi_width = Y["roi"].shape[1], Y["roi"].shape[2]
+    roi_true = tf.reshape(tf.cast(Y["roi"], tf.float32), [batch_size, roi_height, roi_width, 1])
+    roi_pred = tf.reshape(tf.cast(y_pred["roi"] > 0.5, tf.float32), [batch_size, roi_height, roi_width, 1])
+    
+    y_centroid = tf.reshape(Y["centroid"], [grid_area, 2])
+    y_pred_centroid = tf.reshape(y_pred["centroid"], [grid_area, 2])
+    
+    y_detection = tf.reshape(tf.cast(Y["detection"], tf.float32), [grid_area, 4])
+    y_pred_detection = tf.reshape(y_pred["detection"], [grid_area, 4])
+    
+    seg_height, seg_width = Y["segmentation"].shape[2], Y["segmentation"].shape[3]
+    y_segmentation = tf.reshape(tf.cast(Y["segmentation"], tf.float32), [grid_area, seg_height, seg_width, 1])
+    y_pred_segmentation = tf.reshape(tf.cast(y_pred["segmentation"], tf.float32), [grid_area, seg_height, seg_width, 1])
+    
+    y_classification = tf.reshape(Y["classification"], [grid_area])
+    y_pred_classification = tf.reshape(y_pred["classification"], [grid_area, self._NUM_CLASSES])
+    
+    self.metrics_roi_iou.update_state(roi_true, roi_pred)
+    self.metrics_roi_dice.update_state(roi_true, roi_pred)
+    self.metrics_roi_pixel_accuracy.update_state(roi_true, roi_pred)
+    self.metrics_detection_dice_using_position.update_state(y_detection, y_pred_detection)
+    self.metrics_segmentation_iou.update_state(y_segmentation, y_pred_segmentation)
+    self.metrics_segmentation_dice.update_state(y_segmentation, y_pred_segmentation)
+    self.metrics_segmentation_pixel_accuracy.update_state(y_segmentation, y_pred_segmentation)
+    self.metrics_centroid.update_state(y_centroid, y_pred_centroid)
+    self.metrics_classification.update_state(y_classification, y_pred_classification)
+
+    return {
+      "roi_iou": self.metrics_roi_iou.result(),
+      "roi_dice": self.metrics_roi_dice.result(),
+      "roi_pixel_accuracy": self.metrics_roi_pixel_accuracy.result(),
+      "detection_dice_using_position": self.metrics_detection_dice_using_position.result(),
+      "segmentation_iou": self.metrics_segmentation_iou.result(),
+      "segmentation_dice": self.metrics_segmentation_dice.result(),
+      "segmentation_pixel_accuracy": self.metrics_segmentation_pixel_accuracy.result(),
+      "centroid": self.metrics_centroid.result(),
+      "classification": self.metrics_classification.result(),
+    }
 
   def train_step(self, data):
     X, Y = data
@@ -264,7 +335,7 @@ class PillNet(Model):
       y_pred_centroid = tf.reshape(y_pred["centroid"], [grid_area, 2])
       centroid_loss = self.loss_fn_centroid(y_centroid, y_pred_centroid)
 
-      y_detection = tf.reshape(Y["detection"], [grid_area, 4])
+      y_detection = tf.reshape(tf.cast(Y["detection"], tf.float32), [grid_area, 4])
       y_pred_detection = tf.reshape(y_pred["detection"], [grid_area, 4])
       detection_loss = self.loss_fn_detection(y_detection, y_pred_detection)
 
@@ -274,35 +345,48 @@ class PillNet(Model):
       segmentation_loss = self.loss_fn_segmentation(y_segmentation, y_pred_segmentation)
 
       y_classification = tf.reshape(Y["classification"], [grid_area])
-      y_pred_classification = tf.reshape(y_pred["classification"], [grid_area, self.__NUM_CLASSES])
+      y_pred_classification = tf.reshape(y_pred["classification"], [grid_area, self._NUM_CLASSES])
       classification_loss = self.loss_fn_classification(y_classification, y_pred_classification)
       
       total_loss = roi_loss + detection_loss + segmentation_loss + centroid_loss + classification_loss
 
     gradients = tape.gradient(total_loss, self.trainable_variables)
     self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
-    
+
+    self.metrics_roi_iou.update_state(roi_true, roi_pred)
+    self.metrics_roi_dice.update_state(roi_true, roi_pred)
+    self.metrics_roi_pixel_accuracy.update_state(roi_true, roi_pred)
+    self.metrics_detection_dice_using_position.update_state(y_detection, y_pred_detection)
+    self.metrics_segmentation_iou.update_state(y_segmentation, y_pred_segmentation)
+    self.metrics_segmentation_dice.update_state(y_segmentation, y_pred_segmentation)
+    self.metrics_segmentation_pixel_accuracy.update_state(y_segmentation, y_pred_segmentation)
+    self.metrics_centroid.update_state(y_centroid, y_pred_centroid)
+    self.metrics_classification.update_state(y_classification, y_pred_classification)
+
     return {
-      "roi_loss": roi_loss,
-      "detection_loss": detection_loss,
-      "segmentation_loss": segmentation_loss,
-      "centroid_loss": centroid_loss,
-      "classification_loss": classification_loss,
-      "total_loss": total_loss
+      "roi_iou": self.metrics_roi_iou.result(),
+      "roi_dice": self.metrics_roi_dice.result(),
+      "roi_pixel_accuracy": self.metrics_roi_pixel_accuracy.result(),
+      "detection_dice_using_position": self.metrics_detection_dice_using_position.result(),
+      "segmentation_iou": self.metrics_segmentation_iou.result(),
+      "segmentation_dice": self.metrics_segmentation_dice.result(),
+      "segmentation_pixel_accuracy": self.metrics_segmentation_pixel_accuracy.result(),
+      "centroid": self.metrics_centroid.result(),
+      "classification": self.metrics_classification.result(),
     }
   
   def adjust_learning_rate(self, epoch, decay_rate = 0.1, decay_epochs = 10):
     if epoch % decay_epochs == 0:
-      new_lr = self.__INITIAL_LR * (decay_rate ** (epoch // decay_epochs))
+      new_lr = self._INITIAL_LR * (decay_rate ** (epoch // decay_epochs))
       self.optimizer.learning_rate.assign(new_lr)
 
   def get_config(self):
     config = super(PillNet, self).get_config()
     config.update({
-      "batch_size": self.__BATCH_SIZE,
-      "num_classes": self.__NUM_CLASSES,
-      "input_shape": self.__INPUT_SHAPE,
-      "initial_lr": self.__INITIAL_LR
+      "batch_size": self._BATCH_SIZE,
+      "num_classes": self._NUM_CLASSES,
+      "input_shape": self._INPUT_SHAPE,
+      "initial_lr": self._INITIAL_LR
     })
     return config
   

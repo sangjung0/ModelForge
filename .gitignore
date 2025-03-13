@@ -177,3 +177,4 @@ datasets/**
 .devcontainer/nvidia_tools/**
 **.png
 data/**
+models/R-CNN/checkpoints/**

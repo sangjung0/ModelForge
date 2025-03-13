@@ -22,3 +22,11 @@ class PixelAccuracy(tf.keras.metrics.Metric):
     def reset_states(self):
         self.total_accuracy.assign(0.0)
         self.count.assign(0.0)
+
+    def get_config(self):
+        config = super(PixelAccuracy, self).get_config()
+        return config
+    
+    @classmethod
+    def from_config(cls, config):
+        return cls(**config)
