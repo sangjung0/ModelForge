@@ -19,8 +19,8 @@ class DiceUsingPositionMetric(tf.keras.metrics.Metric):
     ry_inter = tf.minimum(ry_true, ry_pred)
     rx_inter = tf.minimum(rx_true, rx_pred)
 
-    inter_height = tf.maximum(0,0, ry_inter - ly_inter)
-    inter_width = tf.maximum(0,0, rx_inter - lx_inter)
+    inter_height = tf.maximum(0.0, ry_inter - ly_inter)
+    inter_width = tf.maximum(0.0, rx_inter - lx_inter)
     intersection_area = inter_height * inter_width
 
     area_true = (ry_true - ly_true) * (rx_true - lx_true)
@@ -39,3 +39,12 @@ class DiceUsingPositionMetric(tf.keras.metrics.Metric):
   def reset_states(self):
     self.total_dice.assign(0.0)
     self.count.assign(0.0)
+
+  def get_config(self):
+    config = super(DiceUsingPositionMetric, self).get_config()
+    config.update({"smooth": self.smooth})
+    return config
+
+  @classmethod
+  def from_config(cls, config):
+    return cls(**config)

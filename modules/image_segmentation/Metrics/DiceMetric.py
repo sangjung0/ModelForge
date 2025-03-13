@@ -24,3 +24,12 @@ class DiceMetric(tf.keras.metrics.Metric):
   def reset_states(self):
     self.total_dice.assign(0.0)
     self.count.assign(0.0)
+
+  def get_config(self):
+    config = super(DiceMetric, self).get_config()
+    config.update({"smooth": self.smooth})
+    return config
+
+  @classmethod
+  def from_config(cls, config):
+    return cls(**config)
