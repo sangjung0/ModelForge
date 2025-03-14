@@ -22,6 +22,7 @@ class GenerativeSequence(image_segmentation.GenerativeSequence):
     shuffle:bool=True, **kwargs
   ):
     super().__init__(data_size, batch_size, shuffle, **kwargs)
+    # 이거 시드 주는 법 수정 필요
     random.seed(random_seed)
     np.random.seed(random_seed)
 
@@ -29,7 +30,6 @@ class GenerativeSequence(image_segmentation.GenerativeSequence):
     self.__BACKGROUND_GENERATOR = Background(background_images_path)
     self.__INPUT_SIZE = input_size
     self.__GRID_SIZE = input_size[0] // 64
-    self.__MAX_DETECTION_COUNT = self.__GRID_SIZE ** 2
     
   def __random_choice(self):
     return random.choice([True, False])
@@ -51,10 +51,10 @@ class GenerativeSequence(image_segmentation.GenerativeSequence):
 
     Y = {
       "roi": np.zeros((batch_size, img_height//4, img_width//4), dtype=np.bool_),
-      "detection": np.zeros((batch_size, self.__MAX_DETECTION_COUNT, 4), dtype=np.float32),
-      "centroid": np.zeros((batch_size, self.__MAX_DETECTION_COUNT, 2), dtype=np.float32),
-      "segmentation": np.zeros((batch_size, self.__MAX_DETECTION_COUNT, img_height //4, img_width//4), dtype=np.bool_),
-      "classification": np.zeros((batch_size, self.__MAX_DETECTION_COUNT), dtype=np.uint32)
+      "detection": np.zeros((batch_size, self.__GRID_SIZE, self.__GRID_SIZE, 4), dtype=np.float32),
+      "centroid": np.zeros((batch_size, self.__GRID_SIZE, self.__GRID_SIZE, 2), dtype=np.float32),
+      "segmentation": np.zeros((batch_size, self.__GRID_SIZE, self.__GRID_SIZE, img_height //4, img_width//4), dtype=np.bool_),
+      "classification": np.zeros((batch_size, self.__GRID_SIZE, self.__GRID_SIZE), dtype=np.uint32)
     }
 
     for i in range(len(indexes)):
@@ -70,7 +70,6 @@ class GenerativeSequence(image_segmentation.GenerativeSequence):
 
         grid_height, grid_width = img_height // self.__GRID_SIZE, img_width // self.__GRID_SIZE
         
-        grid_index = 0
         for row in range(self.__GRID_SIZE):
           for col in range(self.__GRID_SIZE):
             y_min = row * grid_height
@@ -105,11 +104,10 @@ class GenerativeSequence(image_segmentation.GenerativeSequence):
             bbox[2] = (((bbox[2] - y_min) / img_height) + 1)/2
             bbox[3] = (((bbox[3] - x_min) / img_width) + 1)/2
 
-            Y["detection"][i, grid_index] = bbox
-            Y["centroid"][i, grid_index] = centroid
-            Y["segmentation"][i, grid_index] = mask
-            Y["classification"][i, grid_index] = label
-            grid_index += 1
+            Y["detection"][i, row, col] = bbox
+            Y["centroid"][i, row, col] = centroid
+            Y["segmentation"][i, row, col] = mask
+            Y["classification"][i, row, col] = label
 
     return X, Y
     
