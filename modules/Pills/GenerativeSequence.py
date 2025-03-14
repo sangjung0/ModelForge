@@ -34,6 +34,9 @@ class GenerativeSequence(image_segmentation.GenerativeSequence):
   def __random_choice(self):
     return random.choice([True, False])
 
+  def get_grid_size(self):
+    return self.__GRID_SIZE
+
   def get_shape(self):
     return self.__INPUT_SIZE
 

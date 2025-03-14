@@ -1,7 +1,7 @@
 import tensorflow as tf
 from tensorflow.keras import layers, Model
 from tensorflow.keras import metrics as Metrics
-from image_segmentation.loss import dice_loss, dice_using_position_loss, iou_loss, pixel_accuracy_loss, weighted_huber_loss
+from image_segmentation.loss import dice_loss, dice_using_position_loss, iou_loss, pixel_accuracy_loss
 from image_segmentation.Metrics import DiceUsingPositionMetric, IoUMetric, DiceMetric, PixelAccuracy
 
 class PillNet(Model):
@@ -90,7 +90,7 @@ class PillNet(Model):
         "roi": dice_loss,
         "detection": dice_using_position_loss,
         "segmentation": dice_loss,
-        "centroid": weighted_huber_loss(100),
+        "centroid": tf.keras.losses.Huber(),
         "classification": tf.keras.losses.SparseCategoricalCrossentropy(from_logits=False)
       }
 
@@ -126,7 +126,7 @@ class PillNet(Model):
     if "segmentation" not in loss:
       loss["segmentation"] = dice_loss
     if "centroid" not in loss:
-      loss["centroid"] = weighted_huber_loss(100)
+      loss["centroid"] = tf.keras.losses.Huber()
     if "classification" not in loss:
       loss["classification"] = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=False)
 
@@ -293,7 +293,7 @@ class PillNet(Model):
     
     seg_height, seg_width = y_pred["segmentation"].shape[3], y_pred["segmentation"].shape[4]
     segmentation_true = tf.reshape(tf.cast(y_true["segmentation"], tf.float32), [grid_area, seg_height, seg_width, 1])
-    segmentation_pred = tf.reshape(tf.cast(y_pred["segmentation"], tf.float32), [grid_area, seg_height, seg_width, 1])
+    segmentation_pred = tf.reshape(tf.cast(y_pred["segmentation"] > 0.5, tf.float32), [grid_area, seg_height, seg_width, 1])
     
     classification_true = tf.reshape(y_true["classification"], [grid_area])
     classification_pred = tf.reshape(y_pred["classification"], [grid_area, self._NUM_CLASSES])
@@ -360,8 +360,15 @@ class PillNet(Model):
       y_true, y_pred = self._reshape(Y, y_pred)
 
       losses = self._apply_losses(y_true, y_pred)
-      total_loss = sum(losses.values())
-    
+
+      total_loss = sum([
+        losses['roi'],
+        losses['detection'],
+        losses['segmentation'],
+        losses['centroid'] * 10,
+        losses['classification'] * 10
+      ])
+      
     gradients = tape.gradient(total_loss, self.trainable_variables)
     self.__optimizer.apply_gradients(zip(gradients, self.trainable_variables))
 
