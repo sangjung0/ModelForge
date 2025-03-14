@@ -361,11 +361,13 @@ class PillNet(Model):
 
       losses = self._apply_losses(y_true, y_pred)
 
+      tf.print("\nLosses: ", losses)
+
       total_loss = sum([
         losses['roi'],
         losses['detection'],
         losses['segmentation'],
-        losses['centroid'] * 10,
+        losses['centroid'],
         losses['classification'] * 10
       ])
       

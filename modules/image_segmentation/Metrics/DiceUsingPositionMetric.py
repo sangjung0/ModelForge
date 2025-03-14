@@ -24,7 +24,7 @@ class DiceUsingPositionMetric(tf.keras.metrics.Metric):
     intersection_area = tf.maximum(0.0, inter_height * inter_width)
 
     area_true = (ry_true - ly_true) * (rx_true - lx_true)
-    area_pred = (ry_pred - ly_pred) * (rx_pred - lx_pred)
+    area_pred = tf.maximum(0.0, (ry_pred - ly_pred) * (rx_pred - lx_pred))
     
     union_area = area_true + area_pred - intersection_area
     dice_score = (2 * intersection_area + self.smooth) / (union_area + self.smooth)
