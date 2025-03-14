@@ -2,34 +2,26 @@ import tensorflow as tf
 
 ### 1. Dice Loss
 def dice_loss(y_true, y_pred, smooth=1e-6):
-    y_pred = tf.cast(y_pred > 0.5, tf.float32)  # Threshold 적용
-    
     intersection = tf.reduce_sum(y_true * y_pred, axis=[1,2,3])  # 배치별 Intersection
-    total = tf.reduce_sum(y_true, axis=[1,2,3]) + tf.reduce_sum(y_pred, axis=[1,2,3])  # 배치별 Total Pixels
-    
+    total = tf.reduce_sum(y_true + y_pred, axis=[1,2,3])  # 배치별 Total Pixels
     dice = (2. * intersection + smooth) / (total + smooth)  # Dice Score
-    return tf.reduce_mean(1 - dice)  # Loss는 최소화해야 하므로 (1 - Dice Score)
 
+    return tf.reduce_mean(1 - dice)  # Loss는 최소화해야 하므로 (1 - Dice Score)
 
 ### 2. IoU Loss
 def iou_loss(y_true, y_pred, smooth=1e-6):
-    y_pred = tf.cast(y_pred > 0.5, tf.float32)
-    
     intersection = tf.reduce_sum(y_true * y_pred, axis=[1,2,3])  # 배치별 Intersection
-    union = tf.reduce_sum(y_true, axis=[1,2,3]) + tf.reduce_sum(y_pred, axis=[1,2,3]) - intersection  # 배치별 Union
-    
+    union = tf.reduce_sum(y_true + y_pred, axis=[1,2,3]) - intersection  # 배치별 Union
     iou = (intersection + smooth) / (union + smooth)  # IoU Score
-    return tf.reduce_mean(1 - iou)  # Loss는 최소화해야 하므로 (1 - IoU)
 
+    return tf.reduce_mean(1 - iou)  # Loss는 최소화해야 하므로 (1 - IoU)
 
 ### 3. Pixel Accuracy Loss (1 - 픽셀 정확도)
 def pixel_accuracy_loss(y_true, y_pred):
-    y_pred = tf.cast(y_pred > 0.5, tf.float32)
-
     correct = tf.reduce_sum(tf.cast(y_true == y_pred, tf.float32), axis=[1,2,3])  # 맞은 픽셀 개수
     total = tf.cast(tf.reduce_prod(tf.shape(y_true)[1:]), tf.float32)  # 전체 픽셀 개수
-
     accuracy = correct / total  # 배치별 픽셀 정확도
+
     return tf.reduce_mean(1 - accuracy)  # Loss는 최소화해야 하므로 (1 - Accuracy)
 
 
@@ -53,17 +45,3 @@ def dice_using_position_loss(y_true, y_pred, smooth=1e-6):
     dice_score = (2 * intersection_area + smooth) / (union_area + smooth)
 
     return tf.reduce_mean(1 - dice_score)
-
-    
-class weighted_huber_loss(tf.keras.losses.Loss):
-    def __init__(self, weight=1.0, delta=1.0, **kwargs):
-        super(weighted_huber_loss, self).__init__(**kwargs)
-        self.weight = weight
-        self.delta = delta
-
-    def call(self, y_true, y_pred):
-        error = y_true - y_pred
-        abs_error = tf.abs(error)
-        loss = tf.where(abs_error <= self.delta, 0.5 * abs_error**2, self.delta * (abs_error - 0.5 * self.delta))
-        
-        return tf.reduce_mean(loss) * self.weight

@@ -2,8 +2,9 @@ import tensorflow as tf
 
 # Pixel Accuracy Metric
 class PixelAccuracy(tf.keras.metrics.Metric):
-    def __init__(self, name="pixel_accuracy", **kwargs):
+    def __init__(self, name="pixel_accuracy", smooth=1e-6, **kwargs):
         super(PixelAccuracy, self).__init__(name=name, **kwargs)
+        self.smooth = smooth
         self.total_accuracy = self.add_weight(name="total_accuracy", initializer="zeros")
         self.count = self.add_weight(name="count", initializer="zeros")
 
@@ -17,7 +18,7 @@ class PixelAccuracy(tf.keras.metrics.Metric):
         self.count.assign_add(1.0)
 
     def result(self):
-        return self.total_accuracy / (self.count + 1e-6)  # 배치 평균 반환
+        return self.total_accuracy / (self.count + self.smooth)  # 0 ~ 1
 
     def reset_states(self):
         self.total_accuracy.assign(0.0)
@@ -25,6 +26,7 @@ class PixelAccuracy(tf.keras.metrics.Metric):
 
     def get_config(self):
         config = super(PixelAccuracy, self).get_config()
+        config.update({"smooth": self.smooth})
         return config
     
     @classmethod

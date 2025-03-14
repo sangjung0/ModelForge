@@ -19,7 +19,7 @@ class DiceMetric(tf.keras.metrics.Metric):
     self.count.assign_add(1.0)
 
   def result(self):
-    return self.total_dice / (self.count + self.smooth)
+    return self.total_dice / (self.count + self.smooth) # 0 ~ 1
 
   def reset_states(self):
     self.total_dice.assign(0.0)

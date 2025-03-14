@@ -10,10 +10,8 @@ class IoUMetric(tf.keras.metrics.Metric):
     self.count = self.add_weight(name="count", initializer="zeros")  # 배치 개수 저장
 
   def update_state(self, y_true, y_pred, sample_weight=None):
-    y_pred = tf.cast(y_pred > 0.5, tf.float32)  # Threshold 적용
-
     intersection = tf.reduce_sum(y_true * y_pred, axis=[1, 2, 3])
-    union = tf.reduce_sum(y_true, axis=[1, 2, 3]) + tf.reduce_sum(y_pred, axis=[1, 2, 3]) - intersection
+    union = tf.reduce_sum(y_true + y_pred, axis=[1, 2, 3]) - intersection
     iou_score = (intersection + self.smooth) / (union + self.smooth)
 
     batch_mean_iou = tf.reduce_mean(iou_score)  # 배치 평균 계산
@@ -21,7 +19,7 @@ class IoUMetric(tf.keras.metrics.Metric):
     self.count.assign_add(1.0)  # 배치 개수 증가
 
   def result(self):
-    return self.total_iou / (self.count + self.smooth)  # 배치 평균 반환
+    return self.total_iou / (self.count + self.smooth)  # 0 ~ 1
 
   def reset_states(self):
     self.total_iou.assign(0.0)
