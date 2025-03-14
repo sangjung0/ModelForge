@@ -8,6 +8,7 @@ class PillNet(Model):
   def __init__(
     self, 
     num_classes:int, 
+    input_shape:tuple[int, int, int],
     initial_lr = 0.001, 
     **kwargs
   ):
@@ -15,6 +16,7 @@ class PillNet(Model):
 
     self._NUM_CLASSES = num_classes
     self._INITIAL_LR = initial_lr
+    self._INPUT_SHAPE = input_shape
 
     # 굳이 모델이 인식을 해야 할까? 일종의 attention 사용해서 비교를 하는건 어떨까?
     # 현재 metric의 부재와 잘못된 loss 함수로 인해 학습이 잘 안되고 있음
@@ -24,44 +26,47 @@ class PillNet(Model):
     # 커널 크기를 키우면 
     # S x S x 3 -> S/4 x S/4 x 1
     self.roi = tf.keras.Sequential([
-      layers.MaxPooling2D((4, 4), strides=4, padding="same"), # S/4 x S/4 x 3
-      layers.DepthwiseConv2D(depth_multiplier= 16, kernel_size = (9, 9), activation='relu', padding="same"), # S/4 x S/4 x 48
+      layers.DepthwiseConv2D(depth_multiplier= 8, kernel_size = (9, 9), activation='relu', padding="same"), # S x S x 24
+      layers.DepthwiseConv2D(depth_multiplier= 8, kernel_size = (5, 5), activation='relu', padding="same"), # S x S x 24
       layers.LayerNormalization(axis=-1), # 채널 정규화
-      layers.Conv2D(16, (1, 1), activation='relu', padding="same"), # Pointwise Convolution, S/4 x S/4 x 64
-      layers.Conv2D(16, (9, 9), activation='relu', padding="same"), # S/4 x S/4 x 64 
+      layers.Conv2D(32, (1, 1), activation='relu', padding="same"), # Pointwise Convolution, S x S x 32
+      layers.Conv2D(32, (7, 7), strides=2, activation='relu', padding="same"), # S/2 x S/2 x 32 
       layers.LayerNormalization(), # 정규화
-      layers.MaxPooling2D((2, 2), strides = 2, padding="same"), # S/8 x S/8 x 64
-      layers.Conv2D(32, (7, 7), activation='relu', padding="same"), # S/8 x S/8 x 64
-      layers.Conv2D(32, (9, 9), activation='relu', padding="same"), # S/8 x S/8 x 64
-      layers.Conv2DTranspose(16, (3, 3), strides=2, activation='gelu', padding="same"), # S/4 x S/4 x 16
+      layers.Conv2D(32, (5, 5), strides=2, activation='relu', padding="same"), # S/4 x S/4 x 32
+      layers.Conv2D(32, (3, 3), activation='relu', padding="same"), # S/4 x S/4 x 32
       layers.Conv2D(1, (1, 1), activation='sigmoid', padding="same"), # S/4 x S/4 x 1
     ], name="ROI") # 
 
     # S/4 x S/4 x 1 -> G x G x 4
     self.detection_head = tf.keras.Sequential([
-      layers.Conv2D(16, (7, 7), activation='relu', padding="same"), # S/4 x S/4 x 16
-      layers.Conv2D(64, (5, 5), activation='relu', padding="same"), # S/4 x S/4 x 64
-      layers.MaxPooling2D((2, 2), strides=2, padding="same"), # S/8 x S/8 x 128
-      layers.LayerNormalization(), # 정규화
-      layers.Conv2D(128, (5, 5), strides=2, activation='relu', padding="same"), # S/16 x S/16 x 128
-      layers.Conv2D(128, (3, 3), strides=2, activation='relu', padding="same"), # S/32 x S/32 x 128
-      layers.Conv2D(256, (3, 3), strides=2, activation='relu', padding="same"), # G x G x 256
-      layers.Conv2D(4, (1, 1), activation='sigmoid', padding="same"), # G x G x 4 
+      layers.Conv2D(32, (5, 5), strides=2, activation='relu', padding="same"), # S/8 x S/8 x 32
+      layers.Conv2D(16, (3, 3), strides=2, activation='relu', padding="same"), # S/16 x S/16 x 32
+      layers.Flatten(),
+      layers.Dense(self.grid_size ** 2 * 4, activation='relu'), # G x G x 4
+      layers.Dense(self.grid_size ** 2 * 4, activation='sigmoid'), # G x G x 4
+      layers.Reshape([self.grid_size, self.grid_size, 4])
     ], name="DetectionHead")
     
     # S/4 x S/4 x 3 -> S/4 x S/4 x 64
-    self.feature_extractor = tf.keras.Sequential([
-      layers.DepthwiseConv2D(depth_multiplier= 4, kernel_size = (7, 7), activation='relu', padding="same"), # S/4 x S/4 x 12
+    self.feature_extractor = [tf.keras.Sequential([
+      layers.DepthwiseConv2D(depth_multiplier= 8, kernel_size = (7, 7), activation='relu', padding="same"), # S/4 x S/4 x 24
+      layers.DepthwiseConv2D(depth_multiplier= 8, kernel_size = (3, 3), activation='relu', padding="same"), # S/4 x S/4 x 24
       layers.LayerNormalization(axis=-1), # 채널 정규화
-      layers.Conv2D(16, (1, 1), activation='relu', padding="same"), # S/4 x S/4 x 16
-      layers.Conv2D(32, (5, 5), activation='relu', padding="same"), # S/4 x S/4 x 32
+      layers.Conv2D(32, (1, 1), activation='relu', padding="same"), # S/4 x S/4 x 32
       layers.LayerNormalization(), # 정규화
-      layers.Conv2D(64, (3, 3), activation='relu', padding="same"), # S/4 x S/4 x 64
-    ], name="FeatureExtractor")
+    ], name="FeatureExtractor_1"), tf.keras.Sequential([
+      layers.Conv2D(32, (5, 5), activation='relu', padding="same"), # S/4 x S/4 x 32
+      layers.Conv2D(32, (3, 3), activation='relu', padding="same"), # S/4 x S/4 x 32
+      layers.LayerNormalization(), # 정규화
+    ], name="FeatureExtractor_2"), tf.keras.Sequential([
+      layers.Conv2D(32, (5, 5), activation='relu', padding="same"), # S/4 x S/4 x 32
+      layers.Conv2D(32, (3, 3), activation='relu', padding="same"), # S/4 x S/4 x 32
+      layers.LayerNormalization(), # 정규화
+    ], name="FeatureExtractor_3")]
     
     # S/4 x S/4 x 64 -> 2
     self.centroid_head = tf.keras.Sequential([
-      layers.MaxPooling2D((2, 2), strides=2, padding="same"), # S/8 x S/8 x 16
+      layers.Conv2D(16, (3, 3), strides=2, activation='relu', padding="same"), # S/8 x S/8 x 16
       layers.Conv2D(8, (3, 3), strides=2, activation='relu', padding="same"), # S/16 x S/16 x 8
       layers.Conv2D(4, (3, 3), strides=2, activation='relu', padding="same"), # S/32 x S/32 x 4
       layers.Flatten(),
@@ -83,6 +88,54 @@ class PillNet(Model):
       layers.GlobalAveragePooling2D(),
       layers.Dense(self._NUM_CLASSES, activation='softmax') # num_classes
     ], name="ClassificationHead")
+    
+  def call(self, inputs, training=False, gt_detections=None):
+    # input: (BATCH, S, S, 3)
+    # Grid: G x G, G = S/64
+    batch_size = tf.shape(inputs)[0]
+    
+    # roi_mask: (BATCH, S/4, S/4, 1)
+    roi_mask = self.roi(inputs)
+
+    # detection_offsets: (BATCH, S/4, S/4, 32)
+    detection_offsets = self.detection_head(roi_mask)
+    grid_size = tf.shape(detection_offsets)[1]
+    
+    if training and gt_detections is not None:
+      # cropped_regions: (BATCH * G*G, S/4, S/4, 3)
+      cropped_regions = self._crop_regions(inputs, gt_detections, grid_size)
+    else:
+      # cropped_regions: (BATCH * G*G, S/4, S/4, 3)
+      cropped_regions = self._crop_regions(inputs, detection_offsets, grid_size)
+
+    # feature_map: (BATCH * G*G, S/4, S/4, 64)
+    temp = self.feature_extractor[0](cropped_regions)
+    # feature_map: (BATCH * G*G, S/4, S/4, 64)
+    temp_2 = self.feature_extractor[1](temp)
+    temp_2 = layers.Add()([temp, temp_2])
+    # feature_map: (BATCH * G*G, S/4, S/4, 64)
+    temp = self.feature_extractor[2](temp_2)
+    feature_map = layers.Add()([temp_2, temp])
+
+    # segmentation: (BATCH * G*G, S/4, S/4, 1)
+    segmentation = self.segmentation_head(feature_map)
+    # centroid: (BATCH * G*G, 2)
+    centroid = self.centroid_head(feature_map)
+    # classification: (BATCH * G*G, num_classes)
+    classification = self.classification_head(feature_map)
+    
+    segmentation = tf.reshape(segmentation, [
+      batch_size, grid_size, grid_size, self._INPUT_SHAPE[0]//4, self._INPUT_SHAPE[1]//4])
+    centroid = tf.reshape(centroid, [batch_size, grid_size, grid_size, 2])
+    classification = tf.reshape(classification, [batch_size, grid_size, grid_size, self.classification_head.layers[-1].units])
+
+    return {
+      "roi": roi_mask,
+      "detection": detection_offsets,
+      "segmentation": segmentation,
+      "centroid": centroid,
+      "classification": classification
+    }
 
   def compile(self, loss:dict=None, metrics:dict=None, optimizer = None, **kwargs):
     if loss is None:
@@ -162,54 +215,12 @@ class PillNet(Model):
 
   def build(self, batch_size:int, input_shape:tuple[int, int, int], **kwargs):
     self._BATCH_SIZE = batch_size
-    self._INPUT_SHAPE = input_shape
-    super(PillNet, self).build(input_shape=(batch_size, *input_shape), **kwargs)
+    super(PillNet, self).build(input_shape=(batch_size, *self._INPUT_SHAPE), **kwargs)
 
   def summary(self, **kwargs):
     dummy_input = tf.keras.Input(shape=(self._INPUT_SHAPE))
     self(dummy_input)
     super(PillNet, self).summary(**kwargs)
-    
-  def call(self, inputs, training=False, gt_detections=None):
-    # input: (BATCH, S, S, 3)
-    # Grid: G x G, G = S/64
-    batch_size = tf.shape(inputs)[0]
-    
-    # roi_mask: (BATCH, S/4, S/4, 1)
-    roi_mask = self.roi(inputs)
-
-    # detection_offsets: (BATCH, G, G, 4)
-    detection_offsets = self.detection_head(roi_mask)
-    grid_size = tf.shape(detection_offsets)[1]
-    
-    if training and gt_detections is not None:
-      # cropped_regions: (BATCH * G*G, S/4, S/4, 3)
-      cropped_regions = self._crop_regions(inputs, gt_detections, grid_size)
-    else:
-      # cropped_regions: (BATCH * G*G, S/4, S/4, 3)
-      cropped_regions = self._crop_regions(inputs, detection_offsets, grid_size)
-
-    # feature_map: (BATCH * G*G, S/4, S/4, 64)
-    feature_map = self.feature_extractor(cropped_regions)
-    # segmentation: (BATCH * G*G, S/4, S/4, 1)
-    segmentation = self.segmentation_head(feature_map)
-    # centroid: (BATCH * G*G, 2)
-    centroid = self.centroid_head(feature_map)
-    # classification: (BATCH * G*G, num_classes)
-    classification = self.classification_head(feature_map)
-    
-    segmentation = tf.reshape(segmentation, [
-      batch_size, grid_size, grid_size, self._INPUT_SHAPE[0]//4, self._INPUT_SHAPE[1]//4])
-    centroid = tf.reshape(centroid, [batch_size, grid_size, grid_size, 2])
-    classification = tf.reshape(classification, [batch_size, grid_size, grid_size, self.classification_head.layers[-1].units])
-
-    return {
-      "roi": roi_mask,
-      "detection": detection_offsets,
-      "segmentation": segmentation,
-      "centroid": centroid,
-      "classification": classification
-    }
   
   def _crop_regions(self, img, detection_offsets, g):
     cols, rows = tf.meshgrid(tf.range(g, dtype=tf.float32), tf.range(g, dtype=tf.float32))
@@ -385,6 +396,7 @@ class PillNet(Model):
     config = super(PillNet, self).get_config()
     config.update({
       "num_classes": self._NUM_CLASSES,
+      "input_shape": self._INPUT_SHAPE,
       "initial_lr": self._INITIAL_LR
     })
     return config
@@ -405,6 +417,7 @@ class PillNet(Model):
   def from_config(cls, config):
     return cls(
       num_classes = config.get("num_classes", 50),
+      input_shape = config.get("input_shape", (512, 512, 3)),
       initial_lr = config.get("initial_lr", 0.001)
     )
 
