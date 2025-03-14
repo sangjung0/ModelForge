@@ -283,7 +283,7 @@ class PillNet(Model):
     
     roi_height, roi_width = y_pred["roi"].shape[1], y_pred["roi"].shape[2]
     roi_true = tf.reshape(tf.cast(y_true["roi"], tf.float32), [batch_size, roi_height, roi_width, 1])
-    roi_pred = tf.reshape(tf.cast(y_pred["roi"] > 0.5, tf.float32), [batch_size, roi_height, roi_width, 1])
+    roi_pred = tf.reshape(tf.cast(y_pred["roi"], tf.float32), [batch_size, roi_height, roi_width, 1])
 
     centroid_true = tf.reshape(y_true["centroid"], [grid_area, 2])
     centroid_pred = tf.reshape(y_pred["centroid"], [grid_area, 2])
@@ -293,7 +293,7 @@ class PillNet(Model):
     
     seg_height, seg_width = y_pred["segmentation"].shape[3], y_pred["segmentation"].shape[4]
     segmentation_true = tf.reshape(tf.cast(y_true["segmentation"], tf.float32), [grid_area, seg_height, seg_width, 1])
-    segmentation_pred = tf.reshape(tf.cast(y_pred["segmentation"] > 0.5, tf.float32), [grid_area, seg_height, seg_width, 1])
+    segmentation_pred = tf.reshape(tf.cast(y_pred["segmentation"], tf.float32), [grid_area, seg_height, seg_width, 1])
     
     classification_true = tf.reshape(y_true["classification"], [grid_area])
     classification_pred = tf.reshape(y_pred["classification"], [grid_area, self._NUM_CLASSES])
