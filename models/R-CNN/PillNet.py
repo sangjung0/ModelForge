@@ -39,8 +39,10 @@ class PillNet(Model):
 
     # S/4 x S/4 x 1 -> G x G x 4
     self.detection_head = tf.keras.Sequential([
-      layers.Conv2D(32, (5, 5), strides=2, activation='relu', padding="same"), # S/8 x S/8 x 32
-      layers.Conv2D(16, (3, 3), strides=2, activation='relu', padding="same"), # S/16 x S/16 x 32
+      layers.Conv2D(4, (5, 5), strides=2, activation='relu', padding="same"), # S/8 x S/8 x 4
+      layers.Conv2D(8, (3, 3), strides=2, activation='relu', padding="same"), # S/16 x S/16 x 8
+      layers.Conv2D(8, (3, 3), strides=2, activation='relu', padding="same"), # S/32 x S/32 x 8
+      layers.Conv2D(4, (3, 3), strides=2, activation='relu', padding="same"), # S/64 x S/64 x 4
       layers.Flatten(),
       layers.Dense(self.grid_size ** 2 * 4, activation='relu'), # G x G x 4
       layers.Dense(self.grid_size ** 2 * 4, activation='sigmoid'), # G x G x 4
@@ -89,33 +91,26 @@ class PillNet(Model):
       layers.Dense(self._NUM_CLASSES, activation='softmax') # num_classes
     ], name="ClassificationHead")
     
-  def call(self, inputs, training=False, gt_detections=None):
-    # input: (BATCH, S, S, 3)
-    # Grid: G x G, G = S/64
-    batch_size = tf.shape(inputs)[0]
-    
+  def stage_1(self, inputs, training=False):
     # roi_mask: (BATCH, S/4, S/4, 1)
     roi_mask = self.roi(inputs)
-
     # detection_offsets: (BATCH, S/4, S/4, 32)
     detection_offsets = self.detection_head(roi_mask)
-    grid_size = tf.shape(detection_offsets)[1]
-    
-    if training and gt_detections is not None:
-      # cropped_regions: (BATCH * G*G, S/4, S/4, 3)
-      cropped_regions = self._crop_regions(inputs, gt_detections, grid_size)
-    else:
-      # cropped_regions: (BATCH * G*G, S/4, S/4, 3)
-      cropped_regions = self._crop_regions(inputs, detection_offsets, grid_size)
 
+    return {
+      "roi": roi_mask,
+      "detection": detection_offsets
+    }
+    
+  def stage_2(self, inputs, training=False):
     # feature_map: (BATCH * G*G, S/4, S/4, 64)
-    temp = self.feature_extractor[0](cropped_regions)
+    feature_map_1 = self.feature_extractor[0](inputs)
     # feature_map: (BATCH * G*G, S/4, S/4, 64)
-    temp_2 = self.feature_extractor[1](temp)
-    temp_2 = layers.Add()([temp, temp_2])
+    feature_map_2 = self.feature_extractor[1](feature_map_1)
+    feature_map_3 = layers.Add()([feature_map_1, feature_map_2])
     # feature_map: (BATCH * G*G, S/4, S/4, 64)
-    temp = self.feature_extractor[2](temp_2)
-    feature_map = layers.Add()([temp_2, temp])
+    feature_map_4 = self.feature_extractor[2](feature_map_3)
+    feature_map = layers.Add()([feature_map_3, feature_map_4])
 
     # segmentation: (BATCH * G*G, S/4, S/4, 1)
     segmentation = self.segmentation_head(feature_map)
@@ -123,6 +118,31 @@ class PillNet(Model):
     centroid = self.centroid_head(feature_map)
     # classification: (BATCH * G*G, num_classes)
     classification = self.classification_head(feature_map)
+
+    return {
+      "segmentation": segmentation,
+      "centroid": centroid,
+      "classification": classification
+    }
+    
+  def call(self, inputs, training=False, gt_detections=None):
+    # input: (BATCH, S, S, 3)
+    # Grid: G x G, G = S/64
+    batch_size = tf.shape(inputs)[0]
+
+    stage_1 = self.stage_1(inputs, training=training)
+    roi_mask, detection_offsets = stage_1["roi"], stage_1["detection"]
+    grid_size = tf.shape(detection_offsets)[1]
+
+    if training and gt_detections is not None:
+      # cropped_regions: (BATCH * G*G, S/4, S/4, 3)
+      cropped_regions = self._crop_regions(inputs, gt_detections, grid_size)
+    else:
+      # cropped_regions: (BATCH * G*G, S/4, S/4, 3)
+      cropped_regions = self._crop_regions(inputs, detection_offsets, grid_size)
+
+    stage_2 = self.stage_2(cropped_regions, training=training)
+    segmentation, centroid, classification = stage_2["segmentation"], stage_2["centroid"], stage_2["classification"]
     
     segmentation = tf.reshape(segmentation, [
       batch_size, grid_size, grid_size, self._INPUT_SHAPE[0]//4, self._INPUT_SHAPE[1]//4])
@@ -217,9 +237,11 @@ class PillNet(Model):
     self._BATCH_SIZE = batch_size
     super(PillNet, self).build(input_shape=(batch_size, *self._INPUT_SHAPE), **kwargs)
 
-  def summary(self, **kwargs):
     dummy_input = tf.keras.Input(shape=(self._INPUT_SHAPE))
     self(dummy_input)
+    self.__optimizer.build(self.trainable_variables)
+
+  def summary(self, **kwargs):
     super(PillNet, self).summary(**kwargs)
   
   def _crop_regions(self, img, detection_offsets, g):
@@ -287,46 +309,52 @@ class PillNet(Model):
       method='bilinear'
     )
     
-  def _reshape(self, y_true, y_pred):
+  def _stage1_reshape(self, y_true, y_pred):
     grid_size = tf.shape(y_pred["detection"])[1]
     batch_size = tf.shape(y_pred["roi"])[0]
     grid_area = grid_size * grid_size * batch_size
     
     roi_height, roi_width = y_pred["roi"].shape[1], y_pred["roi"].shape[2]
     roi_true = tf.reshape(tf.cast(y_true["roi"], tf.float32), [batch_size, roi_height, roi_width, 1])
-    roi_pred = tf.reshape(tf.cast(y_pred["roi"], tf.float32), [batch_size, roi_height, roi_width, 1])
-
-    centroid_true = tf.reshape(y_true["centroid"], [grid_area, 2])
-    centroid_pred = tf.reshape(y_pred["centroid"], [grid_area, 2])
 
     detection_true = tf.reshape(tf.cast(y_true["detection"], tf.float32), [grid_area, 4])
     detection_pred = tf.reshape(y_pred["detection"], [grid_area, 4])
     
-    seg_height, seg_width = y_pred["segmentation"].shape[3], y_pred["segmentation"].shape[4]
-    segmentation_true = tf.reshape(tf.cast(y_true["segmentation"], tf.float32), [grid_area, seg_height, seg_width, 1])
-    segmentation_pred = tf.reshape(tf.cast(y_pred["segmentation"], tf.float32), [grid_area, seg_height, seg_width, 1])
-    
-    classification_true = tf.reshape(y_true["classification"], [grid_area])
-    classification_pred = tf.reshape(y_pred["classification"], [grid_area, self._NUM_CLASSES])
-    
     true = {
       "roi": roi_true,
-      "centroid": centroid_true,
       "detection": detection_true,
+    }
+    pred = {
+      "roi": y_pred["roi"],
+      "detection": detection_pred,
+    }
+
+    return true, pred
+
+  def _stage2_reshape(self, y_true, y_pred):
+    grid_area = tf.shape(y_pred["centroid"])[0]
+    
+    centroid_true = tf.reshape(y_true["centroid"], [grid_area, 2])
+
+    seg_height, seg_width = y_pred["segmentation"].shape[1], y_pred["segmentation"].shape[2]
+    segmentation_true = tf.reshape(tf.cast(y_true["segmentation"], tf.float32), [grid_area, seg_height, seg_width, 1])
+
+    classification_true = tf.reshape(y_true["classification"], [grid_area])
+    
+    true = {
+      "centroid": centroid_true,
       "segmentation": segmentation_true,
       "classification": classification_true
     }
     pred = {
-      "roi": roi_pred,
-      "centroid": centroid_pred,
-      "detection": detection_pred,
-      "segmentation": segmentation_pred,
-      "classification": classification_pred
+      "centroid": y_pred["centroid"],
+      "segmentation": y_pred["segmentation"],
+      "classification": y_pred["classification"] 
     }
 
     return true, pred
     
-  def _apply_metrics(self, y_true, y_pred):
+  def _stage1_metrics(self, y_true, y_pred):
     metrics = {}
     for key, value in self.__metrics["roi"].items():
       value.update_state(y_true["roi"], y_pred["roi"])
@@ -334,6 +362,10 @@ class PillNet(Model):
     for key, value in self.__metrics["detection"].items():
       value.update_state(y_true["detection"], y_pred["detection"])
       metrics[f"detection_{key}"] = value.result()
+    return metrics
+
+  def _stage2_metrics(self, y_true, y_pred):
+    metrics = {}
     for key, value in self.__metrics["segmentation"].items():
       value.update_state(y_true["segmentation"], y_pred["segmentation"])
       metrics[f"segmentation_{key}"] = value.result()
@@ -346,10 +378,14 @@ class PillNet(Model):
 
     return metrics
 
-  def _apply_losses(self, y_true, y_pred):
+  def _stage1_losses(self, y_true, y_pred):
     losses = {}
     losses['roi'] = self.__loss['roi'](y_true["roi"], y_pred["roi"])
     losses['detection'] = self.__loss['detection'](y_true["detection"], y_pred["detection"])
+    return losses
+
+  def _stage2_losses(self, y_true, y_pred):
+    losses = {}
     losses['segmentation'] = self.__loss['segmentation'](y_true["segmentation"], y_pred["segmentation"])
     losses['centroid'] = self.__loss['centroid'](y_true["centroid"], y_pred["centroid"])
     losses['classification'] = self.__loss['classification'](y_true["classification"], y_pred["classification"])
@@ -358,34 +394,59 @@ class PillNet(Model):
   def test_step(self, data):
     X, Y = data
 
-    y_pred = self(X, training=False, gt_detections=Y["detection"])
-    y_true, y_pred = self._reshape(Y, y_pred)
+    stage_1 = self.stage_1(X, training=False)
+    grid_size = tf.shape(stage_1["detection"])[1]
+    cropped_regions = self._crop_regions(X, stage_1["detection"], grid_size)
+    stage_2 = self.stage_2(cropped_regions, training=False)
 
-    return self._apply_metrics(y_true, y_pred)
+    stage1_y_true, stage1_y_pred = self._stage1_reshape(Y, stage_1)
+
+    stage2_y_true, stage2_y_pred = self._stage2_reshape(Y, stage_2)
+
+    stage1_metrics = self._stage1_metrics(stage1_y_true, stage1_y_pred)
+    stage2_metrics = self._stage2_metrics(stage2_y_true, stage2_y_pred)
+
+    return {**stage1_metrics, **stage2_metrics}
 
   def train_step(self, data):
     X, Y = data
-    
-    with tf.GradientTape() as tape:
-      y_pred = self(X, training=True, gt_detections=Y["detection"])
-      y_true, y_pred = self._reshape(Y, y_pred)
 
-      losses = self._apply_losses(y_true, y_pred)
-
-      tf.print("\nLosses: ", losses)
-
-      total_loss = sum([
-        losses['roi'],
-        losses['detection'],
-        losses['segmentation'],
-        losses['centroid'],
-        losses['classification'] * 10
-      ])
+    cropped_regions = self._crop_regions(X, Y["detection"], tf.shape(Y["detection"])[1])
+    with tf.GradientTape(persistent=True) as tape:
+      stage_1 = self.stage_1(X, training=True)
+      stage1_true, stage1_pred = self._stage1_reshape(Y, stage_1)
+      stage1_losses = self._stage1_losses(stage1_true, stage1_pred)
+      stage1_total_loss = tf.add_n([stage1_losses['roi'], stage1_losses['detection']])
+      stage1_variables = (
+        self.roi.trainable_variables + 
+        self.detection_head.trainable_variables
+      )
       
-    gradients = tape.gradient(total_loss, self.trainable_variables)
-    self.__optimizer.apply_gradients(zip(gradients, self.trainable_variables))
+      stage_2 = self.stage_2(cropped_regions, training=True)
+      stag2_true, stage2_pred = self._stage2_reshape(Y, stage_2)
+      stage2_losses = self._stage2_losses(stag2_true, stage2_pred)
+      stage2_total_loss = tf.add_n([stage2_losses['segmentation'], stage2_losses['centroid'], stage2_losses['classification']])
+      stage2_variables = (
+        self.feature_extractor[0].trainable_variables + 
+        self.feature_extractor[1].trainable_variables +
+        self.feature_extractor[2].trainable_variables +
+        self.segmentation_head.trainable_variables + 
+        self.centroid_head.trainable_variables + 
+        self.classification_head.trainable_variables
+      )
 
-    return self._apply_metrics(y_true, y_pred)
+    stage1_gradients = tape.gradient(stage1_total_loss, stage1_variables)
+    self.__optimizer.apply_gradients(zip(stage1_gradients, stage1_variables))
+    
+    stage2_gradients = tape.gradient(stage2_total_loss, stage2_variables)
+    self.__optimizer.apply_gradients(zip(stage2_gradients, stage2_variables))
+    
+    del tape
+
+    stage1_metrics = self._stage1_metrics(stage1_true, stage1_pred)
+    stage2_metrics = self._stage2_metrics(stag2_true, stage2_pred)
+    
+    return {**stage1_metrics, **stage2_metrics}
   
   def adjust_learning_rate(self, epoch, decay_rate = 0.1, decay_epochs = 10):
     if epoch % decay_epochs == 0:

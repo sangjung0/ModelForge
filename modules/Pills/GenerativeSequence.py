@@ -30,9 +30,6 @@ class GenerativeSequence(image_segmentation.GenerativeSequence):
     self.__BACKGROUND_GENERATOR = Background(background_images_path)
     self.__INPUT_SIZE = input_size
     self.__GRID_SIZE = input_size[0] // 64
-    
-  def __random_choice(self):
-    return random.choice([True, False])
 
   def get_grid_size(self):
     return self.__GRID_SIZE
@@ -116,31 +113,12 @@ class GenerativeSequence(image_segmentation.GenerativeSequence):
     
 
   def __data_generation(self):
-    img, mask, annotations = self.__GENERATOR.generate(
+    img, mask, annotations = self.__GENERATOR.random_generate(
       self.__BACKGROUND_GENERATOR.generate(),
       random.randint(1, 20),
       10, 3, 3, random.randint(0, 10),
-      self.__random_choice(), True
+      random.choice([True, False]), True
     )
-
-    b_mask = mask[:, :] > 0
-
-    if self.__random_choice():
-      img = adjust_saturation_rgba(img, random.uniform(0, 2))
-    if self.__random_choice():
-      img = adjust_exposure_rgba(img, random.uniform(0.5, 2))
-    if self.__random_choice():
-      bright_spot = random_bright_spots(img.shape[:2])
-      img = add_directional_light(
-        img, bright_spot, ksize=(random.randint(0, 100) * 2 + 1), 
-        intensity=random.randint(50, 150), increase_factor=random.uniform(1, 1.5)
-      )
-    if self.__random_choice():
-      img[b_mask] = gaussian_blur(img, ksize=random.randint(1, 5) * 2 + 1)[b_mask]
-    if self.__random_choice():
-      img = random_noise(img, mean=0, std=random.uniform(0, 0.8))
-    if self.__random_choice():
-      img = gaussian_blur(img, ksize=random.randint(1, 5) * 2 + 1)
 
     return cv2.cvtColor(img, cv2.COLOR_RGBA2RGB), mask, annotations[1:]
   

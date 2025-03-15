@@ -26,6 +26,9 @@ class Generator:
     }
     self.__LABEL_LIST = list(sorted(self.__PILLS_DICT.values()))
     
+  def __random_choice(self):
+    return random.choice([True, False])
+    
   def __read_label(self, label_csv_path:Path):
     return pd.read_csv(label_csv_path)
   
@@ -75,6 +78,31 @@ class Generator:
     contours = contours_at_mask(mask)
     img = draw_at_position(background, objects, positions)
     return img, mask, (objects, labels, centroids, bboxes, contours)
+
+  def random_generate(self, *args, **kargs):
+    img, mask, annotations = self.generate(*args, **kargs)
+
+    b_mask = mask[:, :] > 0
+
+    if self.__random_choice():
+      img = adjust_saturation_rgba(img, random.uniform(0, 2))
+    if self.__random_choice():
+      img = adjust_exposure_rgba(img, random.uniform(0.5, 2))
+    if self.__random_choice():
+      bright_spot = random_bright_spots(img.shape[:2])
+      img = add_directional_light(
+        img, bright_spot, ksize=(random.randint(0, 100) * 2 + 1), 
+        intensity=random.randint(50, 150), increase_factor=random.uniform(1, 1.5)
+      )
+    if self.__random_choice():
+      img[b_mask] = gaussian_blur(img, ksize=random.randint(1, 5) * 2 + 1)[b_mask]
+    if self.__random_choice():
+      img = random_noise(img, mean=0, std=random.uniform(0, 0.8))
+    if self.__random_choice():
+      img = gaussian_blur(img, ksize=random.randint(1, 5) * 2 + 1)
+
+    return img, mask, annotations
+
 
     
     
