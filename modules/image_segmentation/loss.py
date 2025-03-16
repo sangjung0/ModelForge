@@ -1,12 +1,12 @@
 import tensorflow as tf
 
 ### 1. Dice Loss
-def dice_loss(y_true, y_pred, smooth=1e-6):
+def dice_loss(y_true, y_pred, smooth=1e-6, scale = 100):
     intersection = tf.reduce_sum(y_true * y_pred, axis=[1,2,3])  # 배치별 Intersection
     total = tf.reduce_sum(y_true + y_pred, axis=[1,2,3])  # 배치별 Total Pixels
     dice = (2. * intersection + smooth) / (total + smooth)  # Dice Score
 
-    return tf.reduce_mean(1 - dice)  # Loss는 최소화해야 하므로 (1 - Dice Score)
+    return tf.reduce_mean(1 - dice) * scale # Loss는 최소화해야 하므로 (1 - Dice Score)
 
 ### 2. IoU Loss
 def iou_loss(y_true, y_pred, smooth=1e-6):
@@ -25,7 +25,7 @@ def pixel_accuracy_loss(y_true, y_pred):
     return tf.reduce_mean(1 - accuracy)  # Loss는 최소화해야 하므로 (1 - Accuracy)
 
 
-def dice_using_position_loss(y_true, y_pred, smooth=1e-6):
+def dice_using_position_loss(y_true, y_pred, smooth=1e-6, scale = 100):
     ly_true, lx_true, ry_true, rx_true = tf.split(y_true, 4, axis=-1)
     ly_pred, lx_pred, ry_pred, rx_pred = tf.split(y_pred, 4, axis=-1)
 
@@ -44,4 +44,4 @@ def dice_using_position_loss(y_true, y_pred, smooth=1e-6):
     union_area = area_true + area_pred - intersection_area
     dice_score = (2 * intersection_area + smooth) / (union_area + smooth)
 
-    return tf.reduce_mean(1 - dice_score)
+    return tf.reduce_mean(1 - dice_score) * scale
