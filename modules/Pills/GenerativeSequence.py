@@ -1,72 +1,88 @@
-import random
 import numpy as np
 
 import image_segmentation
 from Pills.Utils import *
 from Pills import *
 
-SOURCE_PATH = 'datasets/pills/data'
-LABEL_PATH = 'datasets/pills/class_label.csv'
-BACKGROUND_IMAGEES_PATH = 'data'
+SOURCE_PATH = '_Shared/Datasets/pills/data'
+LABEL_PATH = '_Shared/Datasets/pills/class_label.csv'
+SHAPE_PATH = '_Shared/Datasets/pills/class_shape_id.csv'
+SHAPE_ID_PATH = '_Shared/Datasets/pills/id_shape.csv'
+BACKGROUND_IMAGES_PATH = 'data/pills/background'
 
 class GenerativeSequence(image_segmentation.GenerativeSequence):
   def __init__(
     self, 
     data_size:int, 
     batch_size:int, 
-    input_size:tuple[int, int] = (512, 512),
+    input_shape:tuple[int, int] = (512, 512),
     material_path:str = SOURCE_PATH, 
-    label_path:str = LABEL_PATH, 
-    background_images_path:str = BACKGROUND_IMAGEES_PATH,
+    label_csv_path:str = LABEL_PATH, 
+    shape_csv_path:str = SHAPE_PATH,
+    id_shape_csv_path:str = SHAPE_ID_PATH,
+    background_images_path:str = BACKGROUND_IMAGES_PATH,
     random_seed = 42,
-    shuffle:bool=True, **kwargs
+    shuffle:bool=True, 
+    **kwargs
   ):
     super().__init__(data_size, batch_size, shuffle, **kwargs)
-    # 이거 시드 주는 법 수정 필요
-    random.seed(random_seed)
-    np.random.seed(random_seed)
 
-    self.__GENERATOR = Generator(material_path, label_path)
-    self.__BACKGROUND_GENERATOR = Background(background_images_path)
-    self.__INPUT_SIZE = input_size
-    self.__GRID_SIZE = input_size[0] // 64
+    self.__GENERATOR = RandomEffectGenerator(material_path, label_csv_path, shape_csv_path, id_shape_csv_path, random_seed=random_seed)
+    self.__BACKGROUND_GENERATOR = Background(background_images_path, random_seed=random_seed)
+    self.__INPUT_SHAPE = input_shape
+    self.__GRID_SIZE = input_shape[0] // 64
 
-  def get_grid_size(self):
+  @property
+  def grid_size(self):
     return self.__GRID_SIZE
 
-  def get_shape(self):
-    return self.__INPUT_SIZE
+  @property
+  def input_shape(self):
+    return self.__INPUT_SHAPE
 
-  def get_class_count(self):
+  @property
+  def class_size(self):
     return len(self.__GENERATOR)
   
-  def get_label(self, index:int):
-    return self.__GENERATOR.get_label(index)
+  @property
+  def generator(self):
+    return self.__GENERATOR
+
+  def __generate(self):
+    img, mask, annotations = self.__GENERATOR.generate_with_random_effect(
+      self.__BACKGROUND_GENERATOR.generate(),
+      scaling = 10, 
+      max_try_of_random_position = 3, 
+      max_try_of_adaptive_quadtree = 3, 
+      regeneration = True
+    )
+
+    return cv2.cvtColor(img, cv2.COLOR_RGBA2RGB), mask, annotations[1:]
   
-  def _data_generation(self, indexes: list[int]):
-    batch_size = len(indexes)
-    img_height, img_width = self.__INPUT_SIZE
+  def _data_generation(self, indices: list[int]):
+    batch_size = len(indices)
+    img_height, img_width = self.__INPUT_SHAPE
+    shape_size = self.__GENERATOR.shape_size
 
     X = np.zeros((batch_size, img_height, img_width, 3), dtype=np.float32)
 
     Y = {
-      "roi": np.zeros((batch_size, img_height//4, img_width//4), dtype=np.bool_),
+      "roi": np.zeros((batch_size, img_height, img_width, shape_size), dtype=np.bool_),
       "detection": np.zeros((batch_size, self.__GRID_SIZE, self.__GRID_SIZE, 4), dtype=np.float32),
       "centroid": np.zeros((batch_size, self.__GRID_SIZE, self.__GRID_SIZE, 2), dtype=np.float32),
       "segmentation": np.zeros((batch_size, self.__GRID_SIZE, self.__GRID_SIZE, img_height //4, img_width//4), dtype=np.bool_),
       "classification": np.zeros((batch_size, self.__GRID_SIZE, self.__GRID_SIZE), dtype=np.uint32)
     }
-
-    for i in range(len(indexes)):
-        img, mask, (labels, centroids, bboxes, contours) = self.__data_generation()
+    
+    for i in range(len(indices)):
+        img, _, (indices_, centroids, bboxes, contours) = self.__generate()
 
         y_scale = img_height / img.shape[0]
         x_scale = img_width / img.shape[1]
 
         X[i] = cv2.resize(img, (img_width, img_height)).astype(np.float32) / 255
-        Y["roi"][i] = cv2.resize(mask.astype(np.uint8), (img_width//4, img_height//4), interpolation=cv2.INTER_NEAREST) > 0
         
-        annotations = list(zip(labels, centroids, bboxes, contours))
+        annotations = list(zip(indices_, centroids, bboxes, contours))
 
         grid_height, grid_width = img_height // self.__GRID_SIZE, img_width // self.__GRID_SIZE
         
@@ -76,7 +92,7 @@ class GenerativeSequence(image_segmentation.GenerativeSequence):
             x_min = col * grid_width
             center = (y_min + grid_height // 2, x_min + grid_width // 2)
             
-            label, centroid, bbox, contour = min(
+            index, centroid, bbox, contour = min(
               annotations,
               key=lambda x: np.linalg.norm(np.array([x[1][0] * y_scale, x[1][1] * x_scale]) - np.array(center))
             )
@@ -93,10 +109,11 @@ class GenerativeSequence(image_segmentation.GenerativeSequence):
               bbox[3] * x_scale,
             ]
 
-            mask = np.zeros((img_height, img_width), dtype=np.uint8)            
-            contour = np.array([[int(x[0][0] * x_scale), int(x[0][1] * y_scale)] for x in contour])
-            cv2.drawContours(mask, [contour], -1, 1, thickness=cv2.FILLED)
-            mask = mask[int(bbox[0]):int(bbox[2]), int(bbox[1]):int(bbox[3])].astype(np.uint8)
+            roi_paper = np.zeros((img_height, img_width), dtype=np.uint8)            
+
+            scaled_contour = np.array([[int(x[0][0] * x_scale), int(x[0][1] * y_scale)] for x in contour])
+            cv2.drawContours(roi_paper, [scaled_contour], -1, 1, thickness=cv2.FILLED)
+            mask = roi_paper[int(bbox[0]):int(bbox[2]), int(bbox[1]):int(bbox[3])]
             mask = cv2.resize(mask, (img_width//4, img_height//4), interpolation=cv2.INTER_NEAREST) > 0
 
             bbox[0] = (((bbox[0] - y_min) / img_height) + 1)/2
@@ -104,23 +121,16 @@ class GenerativeSequence(image_segmentation.GenerativeSequence):
             bbox[2] = (((bbox[2] - y_min) / img_height) + 1)/2
             bbox[3] = (((bbox[3] - x_min) / img_width) + 1)/2
 
+            class_idx = self.__GENERATOR.get_class_from_index(index)
+            shape  = self.__GENERATOR.get_shape_from_class(class_idx) - 1
+            roi_source = Y["roi"][i, :, :, shape] 
+            roi_source[:, :] = roi_source | (roi_paper > 0)
             Y["detection"][i, row, col] = bbox
             Y["centroid"][i, row, col] = centroid
             Y["segmentation"][i, row, col] = mask
-            Y["classification"][i, row, col] = label
-
+            Y["classification"][i, row, col] = index
+          
     return X, Y
-    
-
-  def __data_generation(self):
-    img, mask, annotations = self.__GENERATOR.random_generate(
-      self.__BACKGROUND_GENERATOR.generate(),
-      random.randint(1, 20),
-      10, 3, 3, random.randint(0, 10),
-      random.choice([True, False]), True
-    )
-
-    return cv2.cvtColor(img, cv2.COLOR_RGBA2RGB), mask, annotations[1:]
   
 def test():
   DATA_SIZE = 10_000_000

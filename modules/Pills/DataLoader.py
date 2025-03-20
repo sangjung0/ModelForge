@@ -6,7 +6,7 @@ from sklearn.model_selection import train_test_split
 from Pills.Sequence import Sequence
 
 SEED = 42
-ANNOTATION_PATH = "datasets/pills/data/annotations.json"
+ANNOTATION_PATH = "Datasets/pills/data/annotations.json"
 RESULT_IMG_SHAPE = (128, 128, 3)
 
 class DataLoader:

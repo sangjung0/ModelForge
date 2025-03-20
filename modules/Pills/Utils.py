@@ -22,7 +22,7 @@ class Position:
 
     shape = background.shape
     shape = (shape[0] - padding[0] - padding[2], shape[1] - padding[1] - padding[3])
-    self._mask = np.zeros((shape[0]//self.__SCALE_FACTOR, shape[1]//self.__SCALE_FACTOR), dtype=np.bool)
+    self._mask = np.zeros((shape[0]//self.__SCALE_FACTOR, shape[1]//self.__SCALE_FACTOR), dtype=np.bool_)
     self._scaled_objects = [cv2.resize(obj, (obj.shape[1]//self.__SCALE_FACTOR, obj.shape[0]//self.__SCALE_FACTOR), interpolation=cv2.INTER_NEAREST) for obj in self._objects]
 
     for _ in range(max_try):
@@ -289,8 +289,8 @@ def random_color_background(size:tuple[int], color:tuple[int] = None):
   background[:, :] = color
   return background
 
-def random_noise(image, mean=0, std=10):
-  noise = np.random.normal(mean, std, image.shape).astype(np.uint8)
+def random_noise(image, mean=0, std=10, np_random:np.random.Generator = np.random):
+  noise = np_random.normal(mean, std, image.shape).astype(np.uint8)
   noisy = cv2.add(image, noise)
   return noisy
 
@@ -351,7 +351,12 @@ def add_directional_light(
 
     return img
 
-def random_bright_spots(shape:tuple[int, int], min:int = 1, max:int = 10):
+def random_bright_spots(
+  shape:tuple[int, int], 
+  min:int = 1, 
+  max:int = 10, 
+  random:random.Random = random
+):
   h, w = shape
   bright_spot = []
   for _ in range(random.randint(min, max)):
@@ -361,3 +366,23 @@ def random_bright_spots(shape:tuple[int, int], min:int = 1, max:int = 10):
     x4, y4 = random.randint(0, w), random.randint(0, h)
     bright_spot.append(((x1, y1), (x2, y2), (x3, y3), (x4, y4)))
   return bright_spot
+
+def random_mask(
+  image:np.ndarray, 
+  num_mask:int=1, 
+  random:random.Random = random
+  ):
+  masked_image = image.copy()
+  h, w = image.shape[:2]
+  
+  for _ in range(num_mask):
+    x1, y1 = random.randint(0, w), random.randint(0, h)
+    x2, y2 = random.randint(x1, w), random.randint(y1, h)
+
+    masked_image[y1:y2, x1:x2] = (
+      random.randint(0, 256), 
+      random.randint(0, 256), 
+      random.randint(0, 256),
+    )
+
+  return masked_image

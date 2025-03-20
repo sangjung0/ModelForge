@@ -2,10 +2,16 @@ import random
 import cv2
 from pathlib import Path
 
-BACKGROUND_IMAGES_PATH = 'data'
+BACKGROUND_IMAGES_PATH = 'data/pills/background'
 
 class Background:
-  def __init__(self, source_dir:str = BACKGROUND_IMAGES_PATH, suffix:tuple[str] = ('.png', '.jpg')):
+  def __init__(
+    self, 
+    source_dir:str = BACKGROUND_IMAGES_PATH, 
+    suffix:tuple[str] = ('.png', '.jpg'), 
+    random_seed:int = 42
+  ):
+    self.__RANDOM = random.Random(random_seed)
     self.__SOURCE_DIR = Path(source_dir)
     self.__SUFFIX = suffix
     self.__BACKGROUND_IMGS = [
@@ -25,15 +31,15 @@ class Background:
       bkg_imgs = [self.__BACKGROUND_IMGS[index]]
     else:
       bkg_imgs = self.__BACKGROUND_IMGS.copy()
-      random.shuffle(bkg_imgs)
+      self.__RANDOM.shuffle(bkg_imgs)
 
-    size = random.randint(min_size, max_size)
+    size = self.__RANDOM.randint(min_size, max_size)
     
     for bkg_img in bkg_imgs:
       if bkg_img.shape[0] < size or bkg_img.shape[1] < size:
         continue
       h, w = bkg_img.shape[:2]
-      row = random.randint(0, h - size)
-      col = random.randint(0, w - size)
+      row = self.__RANDOM.randint(0, h - size)
+      col = self.__RANDOM.randint(0, w - size)
       return bkg_img[row:row + size, col:col + size]
     raise ValueError('No background image with the required size found')
