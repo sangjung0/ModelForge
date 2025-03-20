@@ -8,7 +8,7 @@ class PillNet(Model):
   def __init__(
     self, 
     num_classes:int, 
-    input_shape:tuple[int, int, int],
+    input_shape:tuple[int, int, int] = (512, 512, 3),
     initial_lr = 0.001, 
     **kwargs
   ):
@@ -20,6 +20,7 @@ class PillNet(Model):
 
     # 굳이 모델이 인식을 해야 할까? 일종의 attention 사용해서 비교를 하는건 어떨까?
     # 현재 metric의 부재와 잘못된 loss 함수로 인해 학습이 잘 안되고 있음
+    # lag 사용
     
     # 이거 왜케 큼? 줄이자
     # 스킵커넥션 왜 안씀? inception 구조도 보자, 증명된 최신 기술을 너무 안씀
@@ -129,11 +130,13 @@ class PillNet(Model):
     # input: (BATCH, S, S, 3)
     # Grid: G x G, G = S/64
     batch_size = tf.shape(inputs)[0]
+    resized_inputs = tf.image.resize(inputs, self._INPUT_SHAPE[:2])
 
-    stage_1 = self.stage_1(inputs, training=training)
+    stage_1 = self.stage_1(resized_inputs, training=training)
     roi_mask, detection_offsets = stage_1["roi"], stage_1["detection"]
     grid_size = tf.shape(detection_offsets)[1]
 
+    # 사실 안쓰임
     if training and gt_detections is not None:
       # cropped_regions: (BATCH * G*G, S/4, S/4, 3)
       cropped_regions = self._crop_regions(inputs, gt_detections, grid_size)
@@ -284,8 +287,8 @@ class PillNet(Model):
     box_indices = tf.range(batch_size, dtype=tf.int32) #
     box_indices = tf.repeat(box_indices, repeats=g*g) #
 
-    crop_h = tf.cast(img_height, tf.int32) // 4
-    crop_w = tf.cast(img_width, tf.int32) // 4
+    crop_h = tf.cast(self._INPUT_SHAPE[0], tf.int32) // 4
+    crop_w = tf.cast(self._INPUT_SHAPE[1], tf.int32) // 4
 
     # tf.print("\n 이미지 크기, 박스 크기, 박스 인덱스 크기, 높이, 너비")
     # tf.print(tf.shape(img), tf.shape(boxes), tf.shape(box_indices), crop_h, crop_w)
@@ -315,7 +318,10 @@ class PillNet(Model):
     grid_area = grid_size * grid_size * batch_size
     
     roi_height, roi_width = y_pred["roi"].shape[1], y_pred["roi"].shape[2]
-    roi_true = tf.reshape(tf.cast(y_true["roi"], tf.float32), [batch_size, roi_height, roi_width, 1])
+    # 이 코드 문제 있음
+    roi_true = tf.reshape(
+      tf.image.resize(tf.cast(y_true["roi"], tf.float32), (roi_height, roi_width)),
+      [batch_size, roi_height, roi_width, 1])
 
     detection_true = tf.reshape(tf.cast(y_true["detection"], tf.float32), [grid_area, 4])
     detection_pred = tf.reshape(y_pred["detection"], [grid_area, 4])
@@ -394,13 +400,13 @@ class PillNet(Model):
   def test_step(self, data):
     X, Y = data
 
-    stage_1 = self.stage_1(X, training=False)
+    resized_inputs = tf.image.resize(X, self._INPUT_SHAPE[:2])
+    stage_1 = self.stage_1(resized_inputs, training=False)
     grid_size = tf.shape(stage_1["detection"])[1]
     cropped_regions = self._crop_regions(X, stage_1["detection"], grid_size)
     stage_2 = self.stage_2(cropped_regions, training=False)
 
     stage1_y_true, stage1_y_pred = self._stage1_reshape(Y, stage_1)
-
     stage2_y_true, stage2_y_pred = self._stage2_reshape(Y, stage_2)
 
     stage1_metrics = self._stage1_metrics(stage1_y_true, stage1_y_pred)
@@ -411,12 +417,13 @@ class PillNet(Model):
   def train_step(self, data):
     X, Y = data
 
+    resized_inputs = tf.image.resize(X, self._INPUT_SHAPE[:2])
     cropped_regions = self._crop_regions(X, Y["detection"], tf.shape(Y["detection"])[1])
     with tf.GradientTape(persistent=True) as tape:
-      stage_1 = self.stage_1(X, training=True)
+      stage_1 = self.stage_1(resized_inputs, training=True)
       stage1_true, stage1_pred = self._stage1_reshape(Y, stage_1)
       stage1_losses = self._stage1_losses(stage1_true, stage1_pred)
-      stage1_total_loss = tf.add_n([stage1_losses['roi'], stage1_losses['detection']])
+      stage1_total_loss = stage1_losses['roi'] + stage1_losses['detection']
       stage1_variables = (
         self.roi.trainable_variables + 
         self.detection_head.trainable_variables
@@ -425,7 +432,7 @@ class PillNet(Model):
       stage_2 = self.stage_2(cropped_regions, training=True)
       stag2_true, stage2_pred = self._stage2_reshape(Y, stage_2)
       stage2_losses = self._stage2_losses(stag2_true, stage2_pred)
-      stage2_total_loss = tf.add_n([stage2_losses['segmentation'], stage2_losses['centroid'], stage2_losses['classification']])
+      stage2_total_loss = +stage2_losses['segmentation'], stage2_losses['centroid'], stage2_losses['classification']])
       stage2_variables = (
         self.feature_extractor[0].trainable_variables + 
         self.feature_extractor[1].trainable_variables +
@@ -436,9 +443,11 @@ class PillNet(Model):
       )
 
     stage1_gradients = tape.gradient(stage1_total_loss, stage1_variables)
+    tf.print("Stage 1 Gradients: ", stage1_gradients)
     self.__optimizer.apply_gradients(zip(stage1_gradients, stage1_variables))
     
     stage2_gradients = tape.gradient(stage2_total_loss, stage2_variables)
+    tf.print("Stage 2 Gradients: ", stage2_gradients)
     self.__optimizer.apply_gradients(zip(stage2_gradients, stage2_variables))
     
     del tape

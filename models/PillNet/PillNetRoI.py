@@ -134,10 +134,12 @@ class PillNetRoI(Model):
     self.__optimizer.build(self.trainable_variables)
 
   def _reshape(self, y_true:dict):
+    roi_true = y_true['roi']
+    shape = tf.shape(roi_true)
     roi_true = tf.image.resize(
       tf.reshape(
-        tf.cast(y_true['roi'], tf.float32), 
-        (*y_true['roi'].shape, 1)
+        tf.cast(roi_true, tf.float32), 
+        (shape[0], shape[1], shape[2] , 1)
       ), (self._INPUT_SHAPE[0], self._INPUT_SHAPE[1])
     )
     

@@ -24,7 +24,6 @@ def pixel_accuracy_loss(y_true, y_pred):
 
     return tf.reduce_mean(1 - accuracy)  # Loss는 최소화해야 하므로 (1 - Accuracy)
 
-
 def dice_using_position_loss(y_true, y_pred, smooth=1e-6, scale = 100):
     ly_true, lx_true, ry_true, rx_true = tf.split(y_true, 4, axis=-1)
     ly_pred, lx_pred, ry_pred, rx_pred = tf.split(y_pred, 4, axis=-1)
@@ -45,3 +44,18 @@ def dice_using_position_loss(y_true, y_pred, smooth=1e-6, scale = 100):
     dice_score = (2 * intersection_area + smooth) / (union_area + smooth)
 
     return tf.reduce_mean(1 - dice_score) * scale
+
+def feature_matching_loss(y_true, y_pred, model):
+    y_true = model(y_true)
+    y_pred = model(y_pred)
+    return tf.reduce_mean(tf.abs(y_true - y_pred))
+
+def mae_loss(y_true, y_pred):
+    return tf.reduce_mean(tf.abs(y_true - y_pred))
+
+def mae_with_feature_matching_loss(y_true, y_pred, model, scale=100):
+    return tf.reduce_mean(tf.abs(y_true - y_pred)) + feature_matching_loss(y_true, y_pred, model) * scale
+
+def mae_with_incremental_feature_matching_loss(y_true, y_pred, model, epoch, scale=0.01):
+    scale = scale * (10 ** (epoch // 10))
+    return tf.reduce_mean(tf.abs(y_true - y_pred)) + feature_matching_loss(y_true, y_pred, model) * scale * (epoch + 1)
