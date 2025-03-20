@@ -1,8 +1,9 @@
 import tensorflow as tf
 from tensorflow.keras import layers
 
+from image_segmentation.Callback import EpochTracker
 from image_segmentation.Metrics import FeatureMatchingMetric, MAEMetric
-from image_segmentation.loss import mae_with_feature_matching_loss
+from image_segmentation.loss import mae_with_incremental_feature_matching_loss
 from PillNetBackbone import PillNetBackbone
 
 INPUT_SHAPE = (256, 256, 3)
@@ -47,7 +48,7 @@ class PillNetPT(PillNetBackbone):
       return
 
     if loss is None:
-      loss = mae_with_feature_matching_loss
+      loss = mae_with_incremental_feature_matching_loss
     if metrics is None:
       metrics = {
         "need_model": [FeatureMatchingMetric()],
@@ -86,6 +87,22 @@ class PillNetPT(PillNetBackbone):
       metrics[metric.name] = metric.result()
     return metrics
 
+  def on_train_begin(self, logs=None):
+    for cb in self.callbacks:
+      if isinstance(cb, EpochTracker):
+        self._epoch_tracker = cb
+        break
+
+  def fit(self, *args, callbacks:list = [], **kwargs):
+    for cb in callbacks:
+      if isinstance(cb, EpochTracker):
+        self._epoch_tracker = cb
+        break
+    super(PillNetPT, self).fit(*args, callbacks = callbacks, **kwargs)
+
+  def get_current_epoch(self):
+    return self._epoch_tracker.get_epoch() if self._epoch_tracker else 0
+
   def train_step(self, data):
     X, Y = data
 
@@ -94,7 +111,8 @@ class PillNetPT(PillNetBackbone):
     
     with tf.GradientTape() as tape:
       Y_pred = self(X, training=True)
-      loss = self.__loss(Y, Y_pred, model)
+      # tf.print("\n current epoch: ", self.get_current_epoch())
+      loss = self.__loss(Y, Y_pred, model, self.get_current_epoch())
       # tf.print(loss)
     
     gradients = tape.gradient(loss, self.trainable_variables)
