@@ -1,3 +1,4 @@
+# defualt
 numpy
 pandas
 opencv-python
@@ -5,9 +6,24 @@ scipy
 scikit-image
 matplotlib
 scikit-learn
+tqdm
+seaborn
+
+# tensorflow
 tensorflow==2.18
+
+# torch
 torch
 torchvision
 torchaudio
-seaborn
-tqdm
+
+# Whisper
+faster-whisper
+
+# mistralai
+vllm
+mistral_common
+ipywidgets
+
+# vosk
+vosk

@@ -7,7 +7,8 @@ services:
       target: runtime
     volumes:
       - ../:/workspaces/dev
-      - F:/Datasets:/workspaces/dev/datasets:rw
+      - F:/Models:/workspaces/dev/_Shared/Models:rw
+      - F:/Datasets:/workspaces/dev/_Shared/Datasets:rw
     environment:
       DISPLAY: ${DISPLAY}
     deploy:
