@@ -173,8 +173,8 @@ cython_debug/
 # PyPI configuration file
 .pypirc
 
-datasets/**
+_Shared/**
 .devcontainer/nvidia_tools/**
 **.png
 data/**
-models/R-CNN/checkpoints/**
+models/PillNet/checkpoints/**
