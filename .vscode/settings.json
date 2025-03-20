@@ -10,7 +10,7 @@
   "jupyter.notebookFileRoot": "/workspaces/dev",
   "python.envFile": "${workspaceFolder}/.env",
   "python.analysis.exclude":[
-    "./datasets",
+    "./_Shared",
     "**/__pycache__",
     "**/.git"
   ],
@@ -18,6 +18,6 @@
 		"**/.git/objects/**": true,
 		"**/.git/subtree-cache/**": true,
 		"**/.hg/store/**": true,
-    "datasets": true
+    "_Shared": true
   }
 }
