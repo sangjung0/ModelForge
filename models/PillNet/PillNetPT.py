@@ -2,7 +2,7 @@ import tensorflow as tf
 from tensorflow.keras import layers
 
 from image_segmentation.Callback import EpochTracker
-from image_segmentation.Metrics import FeatureMatchingMetric, MAEMetric
+from image_segmentation.Metrics import FeatureMatchingMetric, MAEFeatureMatchingMetric, MAEMetric
 from image_segmentation.loss import mae_with_incremental_feature_matching_loss
 from PillNetBackbone import PillNetBackbone
 
@@ -52,7 +52,8 @@ class PillNetPT(PillNetBackbone):
     if metrics is None:
       metrics = {
         "need_model": [FeatureMatchingMetric()],
-        "general": [MAEMetric()]
+        "need_model_and_epoch": [MAEFeatureMatchingMetric()],
+        "general": [MAEMetric()],
       }
     if optimizer is None:
       optimizer = tf.keras.optimizers.Adam(learning_rate=self._INITIAL_LR)
@@ -82,9 +83,13 @@ class PillNetPT(PillNetBackbone):
     for metric in self.__metrics["need_model"]:
       metric.update_state(y_true, y_pred, model)
       metrics[metric.name] = metric.result()
+    for metric in self.__metrics["need_model_and_epoch"]:
+      metric.update_state(y_true, y_pred, self.get_current_epoch(), model)
+      metrics[metric.name] = metric.result()
     for metric in self.__metrics["general"]:
       metric.update_state(y_true, y_pred)
       metrics[metric.name] = metric.result()
+    # tf.print(metrics)
     return metrics
 
   def on_train_begin(self, logs=None):

@@ -10,7 +10,7 @@ class FeatureMatchingMetric(tf.keras.metrics.Metric):
     def update_state(self, y_true, y_pred, model, sample_weight=None):
         y_true = model(y_true)
         y_pred = model(y_pred)
-        feature_matching = tf.reduce_mean(tf.abs(y_true - y_pred))
+        feature_matching = tf.reduce_mean(tf.reduce_sum(tf.abs(y_true - y_pred), axis=(1, 2, 3)))
 
         self.total_feature_matching.assign_add(feature_matching)
         self.count.assign_add(1.0)

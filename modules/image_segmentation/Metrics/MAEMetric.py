@@ -7,7 +7,8 @@ class MAEMetric(tf.keras.metrics.Metric):
         self.count = self.add_weight(name='count', initializer='zeros')
 
     def update_state(self, y_true, y_pred, sample_weight=None):
-        mae = tf.reduce_mean(tf.abs(y_true - y_pred))
+
+        mae = tf.reduce_mean(tf.reduce_sum(tf.abs(y_true - y_pred), axis=(1, 2, 3)))
         self.mae.assign_add(mae)
         self.count.assign_add(1)
 

@@ -6,5 +6,6 @@ from .PixelAccuracy import PixelAccuracy
 from .DiceUsingPositionMetric import DiceUsingPositionMetric
 from .FeatureMatchingMetric import FeatureMatchingMetric
 from .MAEMetric import MAEMetric
+from .MAEFeatureMatchingMetric import MAEFeatureMatchingMetric
 
-__all__ = ["DiceMetric", "IoUMetric", "PixelAccuracy", "DiceUsingPositionMetric", "FeatureMatchingMetric", "MAEMetric"]
+__all__ = ["DiceMetric", "IoUMetric", "PixelAccuracy", "DiceUsingPositionMetric", "FeatureMatchingMetric", "MAEMetric", "MAEFeatureMatchingMetric"]

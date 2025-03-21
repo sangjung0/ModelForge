@@ -1,3 +1,4 @@
+from math import pi
 import tensorflow as tf
 
 ### 1. Dice Loss
@@ -48,14 +49,16 @@ def dice_using_position_loss(y_true, y_pred, smooth=1e-6, scale = 100):
 def feature_matching_loss(y_true, y_pred, model):
     y_true = model(y_true)
     y_pred = model(y_pred)
-    return tf.reduce_mean(tf.abs(y_true - y_pred))
+
+    return tf.reduce_mean(tf.reduce_sum(tf.abs(y_true - y_pred), axis=(1, 2, 3)))
 
 def mae_loss(y_true, y_pred):
-    return tf.reduce_mean(tf.abs(y_true - y_pred))
+    return tf.reduce_mean(tf.reduce_sum(tf.abs(y_true - y_pred), axis=(1, 2, 3)))
 
-def mae_with_feature_matching_loss(y_true, y_pred, model, scale=100):
-    return tf.reduce_mean(tf.abs(y_true - y_pred)) + feature_matching_loss(y_true, y_pred, model) * scale
+def mae_with_feature_matching_loss(y_true, y_pred, model, scale=1):
+    return (mae_loss(y_true, y_pred) + feature_matching_loss(y_true, y_pred, model)) * scale
 
-def mae_with_incremental_feature_matching_loss(y_true, y_pred, model, epoch, scale=0.01):
-    scale = scale * (10 ** (epoch // 10))
-    return tf.reduce_mean(tf.abs(y_true - y_pred)) + feature_matching_loss(y_true, y_pred, model) * scale * (epoch + 1)
+def mae_with_incremental_feature_matching_loss(y_true, y_pred, model, epoch, warmup:int=100, scale:int = 1):
+    ratio = epoch // warmup  * pi / 2
+    ratio = tf.sin(ratio)
+    return (mae_loss(y_true, y_pred) * (1 - ratio) + feature_matching_loss(y_true, y_pred, model) * ratio) * scale
