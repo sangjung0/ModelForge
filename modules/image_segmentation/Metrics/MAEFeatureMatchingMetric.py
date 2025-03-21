@@ -2,23 +2,25 @@ from math import pi
 import tensorflow as tf
 
 class MAEFeatureMatchingMetric(tf.keras.metrics.Metric):
-  def __init__(self, name="mae_feature_matching_metric", **kwargs):
+  def __init__(self, name="mae_feature_matching_metric", warmup:int=1000, scale:int = 1, **kwargs):
     super(MAEFeatureMatchingMetric, self).__init__(name=name, **kwargs)
+    self.warmup = warmup
+    self.scale = scale
     self.total_mae_feature_matching = self.add_weight(name="total_mae_feature_matching", initializer="zeros")
     self.count = self.add_weight(name="count", initializer="zeros")
 
-  def update_state(self, y_true, y_pred, epoch, model, warmup:int=1000, scale:int = 1, sample_weight=None):
+  def update_state(self, y_true, y_pred, model, epoch, sample_weight=None):
     mae = tf.reduce_mean(tf.reduce_sum(tf.abs(y_true - y_pred), axis=(1, 2, 3)))
     y_true = model(y_true)
     y_pred = model(y_pred)
     feature_matching = tf.reduce_mean(tf.reduce_sum(tf.abs(y_true - y_pred), axis=(1, 2, 3)))
 
-    ratio = (epoch / warmup) * (pi / 2)
+    ratio = (epoch / self.warmup) * (pi / 2)
     # tf.print("\nratio:", ratio)
     # tf.print(epoch, pi)
     ratio = tf.sin(ratio)
     # tf.print("post ratio", ratio)
-    sum = (mae * (1 - ratio) + feature_matching * ratio) * scale
+    sum = (mae * (1 - ratio) + feature_matching * ratio) * self.scale
     # tf.print(mae)
     # tf.print(feature_matching)
 
@@ -34,6 +36,7 @@ class MAEFeatureMatchingMetric(tf.keras.metrics.Metric):
     
   def get_config(self):
     config = super(MAEFeatureMatchingMetric, self).get_config()
+    config.update({"warmup": self.warmup, "scale": self.scale})
     return config
   
   @classmethod

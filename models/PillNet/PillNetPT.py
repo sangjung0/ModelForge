@@ -84,7 +84,7 @@ class PillNetPT(PillNetBackbone):
       metric.update_state(y_true, y_pred, model)
       metrics[metric.name] = metric.result()
     for metric in self.__metrics["need_model_and_epoch"]:
-      metric.update_state(y_true, y_pred, self.get_current_epoch(), model)
+      metric.update_state(y_true, y_pred, model, self.get_current_epoch())
       metrics[metric.name] = metric.result()
     for metric in self.__metrics["general"]:
       metric.update_state(y_true, y_pred)

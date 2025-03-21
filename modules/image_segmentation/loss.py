@@ -58,7 +58,7 @@ def mae_loss(y_true, y_pred):
 def mae_with_feature_matching_loss(y_true, y_pred, model, scale=1):
     return (mae_loss(y_true, y_pred) + feature_matching_loss(y_true, y_pred, model)) * scale
 
-def mae_with_incremental_feature_matching_loss(y_true, y_pred, model, epoch, warmup:int=100, scale:int = 1):
-    ratio = epoch // warmup  * pi / 2
+def mae_with_incremental_feature_matching_loss(y_true, y_pred, model, epoch, warmup:int=1000, scale:int = 1):
+    ratio = (epoch / warmup) * (pi / 2)
     ratio = tf.sin(ratio)
     return (mae_loss(y_true, y_pred) * (1 - ratio) + feature_matching_loss(y_true, y_pred, model) * ratio) * scale
